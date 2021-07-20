@@ -1,7 +1,7 @@
 # Study-Annotation-Tool
 Study annotation tool is a tool to annotate handwriting text images with respect to IAM format Database. 
 
-![screen1](/images/screen1.png height="50%" width="50%")
+![screen1](/images/screen1.png)
 
 
 ## How to install
