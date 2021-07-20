@@ -1,9 +1,6 @@
 # Study-Annotation-Tool
 Study annotation tool is a tool to annotate handwriting text images with respect to IAM format Database. 
 
-![screen1](/images/screen1.png)
-
-
 ## Install Dependencies
 * Use Python 3.8.5
 
@@ -13,6 +10,8 @@ Study annotation tool is a tool to annotate handwriting text images with respect
 * Go to src folder and run this command
 
  > python3 annotationgui.py
+
+![screen1](/images/screen1.png)
 
 * Then, follow enabled buttons
 1. By clicking on Open button, select folder containing images for annotation and the frst image will appear in the canvas
