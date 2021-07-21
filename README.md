@@ -14,7 +14,9 @@ Study annotation tool is a tool to annotate handwriting text images with respect
 * Download [trained model](https://www.dropbox.com/s/mqhco2q67ovpfjq/model.zip?dl=1), and place the unzipped files into the model directory
 * Go to src folder and run this command
 
- > python3 annotationgui.py
+```python
+ python3 annotationgui.py
+```
 
 ![screen1](/images/screen1.png)
 
