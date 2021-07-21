@@ -8,7 +8,7 @@ Study annotation tool is a tool to annotate handwriting text images with respect
 
 ## Run Study Annotation Tool
 * Download trained model, and place the unzipped files into the model directory
-* Go to >>src folder and run this command
+* Go to src folder and run this command
 
  > python3 annotationgui.py
 
@@ -27,3 +27,4 @@ Study annotation tool is a tool to annotate handwriting text images with respect
 
 
 ## References
+* Handwritten Word Detector 
