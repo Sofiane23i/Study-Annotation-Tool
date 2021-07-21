@@ -34,3 +34,4 @@ Study annotation tool is a tool to annotate handwriting text images with respect
 
 ## References
 * [Handwritten Word Detector](https://github.com/githubharald/WordDetectorNN) 
+* [IAM Handwriting Database](https://fki.tic.heia-fr.ch/databases/iam-handwriting-database)
