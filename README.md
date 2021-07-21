@@ -2,7 +2,7 @@
 Study annotation tool is a tool to annotate handwriting text images with respect to IAM format Database. 
 
 ## Install Dependencies
-* Use Python 3.8.5 and ven
+* Use Python 3.8.5 and venv
 
 ```python
   python3 -m venv StudyAnnotationTool
