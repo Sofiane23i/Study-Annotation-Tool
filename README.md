@@ -24,7 +24,8 @@ Study annotation tool is a tool to annotate handwriting text images with respect
 1. By clicking on Open button, select folder containing images for annotation and the frst image will appear in the canvas
 2. By clicking on Words Detection button, words will be detected and annotated arround boxes
 3. By clicking on Annotate button, new window will open and all words will be presented with input field for transcription 
-4. By clicking on generateAnnotation button, Process repeated for next image ...
+4. By clicking on generateAnnotation button, IAM annotation text file will be generated and saved with the current image and word crops. 
+5. If there are images remaining in the folder, the same process will be repeated for next image ...
 
 ![screen1](/images/screen2.png)
 ![screen1](/images/screen3.png)
