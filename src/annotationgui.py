@@ -44,24 +44,6 @@ pos = 0 #order listfile
 #pathDirectory = '../data/testpng/'
 
 
-'''
-def open_file():
-    """Open a file for editing."""
-    filepath = askopenfilename(
-        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
-    )
-    if not filepath:
-        return
-    txt_edit.delete(1.0, tk.END)
-    with open(filepath, "r") as input_file:
-        text = input_file.read()
-        txt_edit.insert(tk.END, text)
-    window.title(f"Simple Text Annotation - {filepath}")
-    '''
-
-
-
-
 def init_pathandfolders():
     folder_selected = filedialog.askdirectory()
     print(folder_selected)
@@ -105,34 +87,12 @@ def init_pathandfolders():
     directorydone = pathDirectory+"_data/done/"
     if not os.path.exists(directorydone):
         os.makedirs(directorydone)         
-
-    #Path("../data/out/").mkdir(parents=True, exist_ok=True)
-    #Path("../data/tmp/").mkdir(parents=True, exist_ok=True)
-    #Path("../data/done/").mkdir(parents=True, exist_ok=True)
     
     btn_open["state"] = "disabled"
     btn_annotate["state"] = "disabled"
     btn_save["state"] = "normal"
 
 def save_file():
-    """Save the current file as a new file."""
-    '''filepath = asksaveasfilename(
-        defaultextension="txt",
-        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-    )
-    if not filepath:
-        return
-    with open(filepath, "w") as output_file:
-        text = txt_edit.get(1.0, tk.END)
-        output_file.write(text)
-    window.title(f"Simple Text Editor - {filepath}")
-    ''''''
-    img = Image.open("../data/testpng/bg00101.jpg")
-    img = img.resize((800, 800))
-    tkimage = ImageTk.PhotoImage(img)
-    tk.Label(txt_edit, image=tkimage).grid()  
-    img = Image.open("../data/testpng/bg00101.jpg")
-    img = img.resize((800, 800))'''
     
     global pos
     global finalrowsbbx
@@ -334,11 +294,6 @@ def annotation_file():
     global ind2
     
     
-    
-    
-    #print (finalrowsbbx[0][0])
-           
-    #fff = open(os.listdir(pathDirectory)[pos]+".txt", "w")
     global pos
     fff = open(list_of_files[pos]+".txt", "w")
     ind = 0
@@ -352,14 +307,6 @@ def annotation_file():
     global r
     global nbrout
     r.destroy()
-    
-    '''
-    shutil.move(list_of_files[pos], '../data/doneimages/' ) 
-    shutil.move(list_of_files[pos]+'.txt', '../data/doneimages/' )
-    os.mkdir('../data/doneimages/'+str(nbrout))
-    for ff in os.listdir('out/'):
-        shutil.move('out/'+ff, '../data/doneimages/'+str(nbrout))
-        '''
         
     shutil.move(list_of_files[pos], directorydone) 
     shutil.move(list_of_files[pos]+'.txt',  directorydone)
@@ -400,26 +347,23 @@ def annotate():
     r.title("Words Annotation")
 
       
-    canvas = Canvas(r, height=1500, width=1500)
+    canvas = Canvas(r, height=1500, width=1500)   
     
-    
-    '''
-    canvas.create_oval(10, 10, 20, 20, fill="red")
-    canvas.create_oval(200, 200, 220, 220, fill="blue")
-    canvas.grid(row=0, column=0)
-
-    scroll_x = tk.Scrollbar(r, orient="horizontal", command=canvas.xview)
-    scroll_x.grid(row=1, column=0, sticky="ew")
-
-    scroll_y = tk.Scrollbar(r, orient="vertical", command=canvas.yview)
-    scroll_y.grid(row=0, column=1, sticky="ns")
-
-    canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
-    canvas.configure(scrollregion=canvas.bbox("all"))
-    '''
     canvas.pack()
+    
+    yscrollbar = Scrollbar(canvas)
+    yscrollbar.grid(row=0, column=1, sticky=N+S)
+    
+    canvas = Canvas(canvas, bd=0, yscrollcommand=yscrollbar.set)
+    canvas.config(height=1000, width=1500, scrollregion=(0, 0, 1500, 1500))
+    canvas.grid(row=0, column=0, sticky=E+W)
+
+    yscrollbar.config( command = canvas.yview)
+    
+    
     button1 = tk.Button(canvas, text="generateAnnotation", command=annotation_file)
-    button1_window = canvas.create_window(300, 680, anchor=NW, window=button1)
+    #button1_window = canvas.create_window(0, 680, anchor=NW, window=button1)
+    
     #for filename in os.listdir('out/'):
     #    print(filename)
     directoryout
@@ -449,9 +393,11 @@ def annotate():
          
         canvas.create_window(rowindex+55, colindex+110, window=entries[abs(nbr-len(os.listdir(directoryout+'/'))-jj)])
         
+        
         rowindex = (rowindex + 130)
         
         cpt = cpt+1
+    button1_window = canvas.create_window(rowindex+55, colindex+110, anchor=NW, window=button1)    
         
     #img22=ImageTk.PhotoImage(Image.open('out/2.png').resize((100,100)))
     #canvas.create_image(0, 120, anchor=NW, image=img22) 
@@ -515,4 +461,3 @@ else:
 '''    
         
 window.mainloop()
-
