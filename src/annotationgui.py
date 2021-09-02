@@ -355,7 +355,7 @@ def annotate():
     yscrollbar.grid(row=0, column=1, sticky=N+S)
     
     canvas = Canvas(canvas, bd=0, yscrollcommand=yscrollbar.set)
-    canvas.config(height=1000, width=1500, scrollregion=(0, 0, 1500, 1500))
+    canvas.config(height=1000, width=1500, scrollregion=(0, 0, 1500, 2000))
     canvas.grid(row=0, column=0, sticky=E+W)
 
     yscrollbar.config( command = canvas.yview)
