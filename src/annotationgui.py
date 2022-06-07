@@ -1,3 +1,4 @@
+from http.client import OK
 import os
 import tkinter as tk
 from tkinter import *
@@ -25,7 +26,6 @@ global nbrout
 global ind2
 global pathDirectory
 global list_of_files
-
 
 my_log = 'log.txt'
 if os.path.exists(my_log):
