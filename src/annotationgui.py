@@ -12,6 +12,8 @@ from eval import evaluate
 from visualization import visualize_and_plot, visualize
 import numpy as np
 from tkinter import filedialog
+from tkinter import filedialog as fd
+from tkinter.messagebox import showinfo
 #from pathlib import Path
 
 import shutil
@@ -62,6 +64,7 @@ def init_pathandfolders():
         print(filename)
 
     list_of_files = sorted( filter( os.path.isfile, glob.glob(pathDirectory + '/*.jpg' ) ))
+    #list_of_files = sorted( filter( os.path.isfile, glob.glob(pathDirectory + '/*.png' ) ))
     for file_path in list_of_files:
         print(file_path)
     
@@ -141,6 +144,8 @@ def save_file():
         
         img = loader.get_original_img(i)
         immg = loader.get_original_img_rgb(i)
+        
+        print(img.shape)
     
     for ii in aabbs:
         listoflist.append([ii.xmin,ii.ymin,ii.xmax,ii.ymax])
@@ -340,28 +345,129 @@ def annotation_file():
         window.wait_window(fInfos)
      
     
+def import_annotaion():
 
+    global text_box
+    global entries
+    global entryText
+    
+    filetypes = (
+        ('text files', '*.txt'),
+        ('All files', '*.*')
+    )
+
+    filename = fd.askopenfilename(
+        title='Open a file',
+        initialdir='/',
+        filetypes=filetypes)
+
+    #showinfo(
+    #    title='Selected File',
+    #    message=filename
+    #)
+    message = ''
+    
+    file1 = open(filename, 'r')
+    Lines = file1.readlines()
+    for line in Lines:
+        print(line)
+        linee = line.split('\n')
+        print(linee)
+        linee = linee[0].split(' ')
+        print(linee)
+        for ii in linee:
+            message = message + ii + '\n'
+    message = message[:-1]        
+    print(message)
+    
+    text_box.insert('end', message)
+    
+    print(len(entries))
+    jj=0
+    for  ii  in message.split('\n'):
+        entryText[jj].set(ii)
+        jj=jj+1
+    
+    
+    #import re
+    #with open(filename) as f, open('word_list.txt', 'a') as f1:
+    #    f1.write('\n'.join(set(re.findall("[a-zA-Z\-\.'/]+", f.read()))))
+
+def refreshing():
+    global text_box
+    global entries
+    global entryText
+    
+    message = text_box.get(1.0, "end-1c")
+    print(message)
+    
+    jj=0
+    for  ii  in message.split('\n'):
+        entryText[jj].set(ii)
+        jj=jj+1
+    
+    
+    
 def annotate():
     global r
+    global text_box
+    
     r = Toplevel()
     r.title("Words Annotation")
 
       
-    canvas = Canvas(r, height=1500, width=1500)   
+    #canvas = Canvas(r, height=1500, width=1500) 
+    canvas1 = Canvas(r, height=1500, width=1500) 
     
-    canvas.pack()
+        
+    canvas1.pack()
     
-    yscrollbar = Scrollbar(canvas)
+    yscrollbar = Scrollbar(canvas1)
     yscrollbar.grid(row=0, column=1, sticky=N+S)
     
-    canvas = Canvas(canvas, bd=0, yscrollcommand=yscrollbar.set)
-    canvas.config(height=1000, width=1500, scrollregion=(0, 0, 1500, 1500))
-    canvas.grid(row=0, column=0, sticky=E+W)
+    canvas = Canvas(canvas1, bd=0, yscrollcommand=yscrollbar.set)
+    
+    canvas.config(height=1000, width=1300, scrollregion=(0, 0, 1500, 2000))
+    
+    #canvas.rowconfigure(0, minsize=1000, weight=1)
+    #canvas.columnconfigure(1, minsize=1500, weight=1)
+    #canvas.grid(row=0, column=0, sticky=E+W)
 
     yscrollbar.config( command = canvas.yview)
     
     
+    
+    
     button1 = tk.Button(canvas, text="generateAnnotation", command=annotation_file)
+    
+    canvas2 = Canvas(canvas1, bd=0, yscrollcommand=yscrollbar.set)
+    button2 = tk.Button(canvas2, text="importAnnotation", command=import_annotaion)
+    button2.grid(row=0, column=2, sticky="ns", padx=5, pady=55)
+ 
+       
+    text_box = Text(canvas2, height=40, width=30)
+    text_box.grid(row=1, column=2, sticky="ns", padx=5, pady=55)
+    
+    button3 = tk.Button(canvas2, text="refresh", command=refreshing)
+    button3.grid(row=2, column=2, sticky="ns", padx=5, pady=55)
+    
+    #text_box.insert('end', message)
+    #text_box.pack(side=LEFT,expand=True)
+    
+    
+    
+    frame = Frame(canvas2)
+    sb = Scrollbar(frame)
+    sb.pack(side=RIGHT, fill=BOTH)
+    text_box.config(yscrollcommand=sb.set)
+    sb.config(command=text_box.yview)
+    #frame.pack(expand=True)
+    
+
+    
+    canvas.grid(row=0, column=0, sticky="ew")
+    canvas2.grid(row=0, column=2)
+    #yscrollbar.grid(row=0, column=0, sticky=N+S)
     #button1_window = canvas.create_window(0, 680, anchor=NW, window=button1)
     
     #for filename in os.listdir('out/'):
@@ -377,19 +483,24 @@ def annotate():
     cpt = 0
     global entries
     global nbr
+    global entryText
     entries = []
+    entryText = []
+    
+    #entryText = tk.StringVar()
+    ent = 0
     #for jj in range(nbr-len(os.listdir('out/')), nbr):
     for jj in range(nbr-len(os.listdir(directoryout+'/')), nbr):
         
-        if cpt == 11:
+        if cpt == 10: #11:
             colindex = (colindex + 130)
             cpt = 0
             rowindex = 0
         img2.append(ImageTk.PhotoImage(Image.open(directoryout+'/'+str(jj)+'.png').resize((100,100))))
         canvas.create_image(rowindex, colindex, anchor=NW, image=img2[abs(nbr-len(os.listdir(directoryout+'/'))-jj)])
         
-        
-        entries.append(tk.Entry (r, width=13))
+        entryText.append(tk.StringVar())
+        entries.append(tk.Entry (r, width=13, textvariable=entryText[ent]))
          
         canvas.create_window(rowindex+55, colindex+110, window=entries[abs(nbr-len(os.listdir(directoryout+'/'))-jj)])
         
@@ -397,6 +508,7 @@ def annotate():
         rowindex = (rowindex + 130)
         
         cpt = cpt+1
+        ent=ent+1
     button1_window = canvas.create_window(rowindex+55, colindex+110, anchor=NW, window=button1)    
         
     #img22=ImageTk.PhotoImage(Image.open('out/2.png').resize((100,100)))
