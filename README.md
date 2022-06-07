@@ -8,10 +8,11 @@ Study annotation tool is a tool to annotate handwriting text images with respect
   python3 -m venv StudyAnnotationTool
   source StudyAnnotationTool/bin/activate
   pip3 install -r requirements.txt
+  https://www.dropbox.com/s/mqhco2q67ovpfjq/model.zip?dl=1  
  ```
 
 ## Run Study Annotation Tool
-* Download [trained model](https://www.dropbox.com/s/mqhco2q67ovpfjq/model.zip?dl=1), and place the unzipped files into the model directory
+* Download [trained model](https://drive.google.com/file/d/1utQgvQusucEl9kxnkwI_X-FOshrs2mL9/view), and place the unzipped files into the model directory
 * Go to src folder and run this command
 
 ```python
