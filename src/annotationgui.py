@@ -94,7 +94,7 @@ window.columnconfigure(1, minsize=800, weight=1)
 
 
 
-txt_edit = tk.Text(window)
+txt_edit = tk.Frame(window)
 fr_buttons = tk.Frame(window, relief=tk.RAISED, bd=2)
 btn_open = tk.Button(fr_buttons, text="Open", command=init_pathandfolders)
 btn_htr = tk.Button(fr_buttons, text="GenerateHTR", command=generate_htr)
