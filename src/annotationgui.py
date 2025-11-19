@@ -130,7 +130,39 @@ img = ImageTk.PhotoImage(Image.open("../data/testpng/bg00102.jpg").resize((800, 
 label= tk.Label(txt_edit,image= img)
 label.grid()
 '''
-img1= ImageTk.PhotoImage(Image.open('StudyAnnotateTool.jpg').resize((800,800)))
+
+# Load background image with proper error handling
+try:
+    # Try different possible paths for the image
+    image_paths = [
+        'StudyAnnotateTool.jpg',  # Current directory
+        os.path.join(os.path.dirname(__file__), 'StudyAnnotateTool.jpg'),  # Same as script
+        os.path.join(os.path.dirname(__file__), '..', 'images', 'screen1.png'),  # Images folder
+    ]
+    
+    img1 = None
+    for image_path in image_paths:
+        try:
+            if os.path.exists(image_path):
+                img1 = ImageTk.PhotoImage(Image.open(image_path).resize((800,800)))
+                print(f"Successfully loaded image from: {image_path}")
+                break
+        except Exception as e:
+            print(f"Failed to load image from {image_path}: {e}")
+            continue
+    
+    if img1 is None:
+        # Create a simple placeholder image if no image found
+        placeholder = Image.new('RGB', (800, 800), color='lightgray')
+        img1 = ImageTk.PhotoImage(placeholder)
+        print("Created placeholder image")
+        
+except Exception as e:
+    print(f"Image loading error: {e}")
+    # Create a simple colored background as ultimate fallback
+    placeholder = Image.new('RGB', (800, 800), color='lightblue')
+    img1 = ImageTk.PhotoImage(placeholder)
+
 #Create a Label widget
 label= tk.Label(txt_edit,image= img1)
 label.grid()
