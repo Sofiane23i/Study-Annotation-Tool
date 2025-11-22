@@ -22,8 +22,26 @@ def parse_and_render_svg(svg_file_path, canvas, canvas_width=600, canvas_height=
         # Extract SVG namespace and viewBox
         viewbox = root.get('viewBox', '0 0 1000 400')
         viewbox_parts = viewbox.split()
-        svg_width = float(viewbox_parts[2])
-        svg_height = float(viewbox_parts[3])
+        if len(viewbox_parts) < 4:
+            # Try to get width/height from root attributes
+            width_str = root.get('width', '1000')
+            height_str = root.get('height', '400')
+            # Handle percentage and other non-numeric values
+            try:
+                svg_width = float(width_str.rstrip('%px'))
+                if '%' in width_str:
+                    svg_width = 1000  # Default for percentage
+            except (ValueError, AttributeError):
+                svg_width = 1000
+            try:
+                svg_height = float(height_str.rstrip('%px'))
+                if '%' in height_str:
+                    svg_height = 400  # Default for percentage
+            except (ValueError, AttributeError):
+                svg_height = 400
+        else:
+            svg_width = float(viewbox_parts[2])
+            svg_height = float(viewbox_parts[3])
         
         # Calculate scaling to fit canvas
         scale_x = canvas_width / svg_width
@@ -103,6 +121,125 @@ def parse_and_render_svg(svg_file_path, canvas, canvas_width=600, canvas_height=
         
     except Exception as e:
         print(f"SVG parsing error: {e}")
+        return False
+
+def svg_to_jpeg(svg_file_path, jpeg_file_path, width=1200, height=600):
+    """Convert SVG file to JPEG by rendering the handwriting paths"""
+    try:
+        # Read and parse SVG file
+        with open(svg_file_path, 'r', encoding='utf-8') as f:
+            svg_content = f.read()
+        
+        # Parse XML
+        root = ET.fromstring(svg_content)
+        
+        # Extract SVG viewBox
+        viewbox = root.get('viewBox', '0 0 1000 400')
+        viewbox_parts = viewbox.split()
+        if len(viewbox_parts) < 4:
+            # Try to get width/height from root attributes
+            width_str = root.get('width', '1000')
+            height_str = root.get('height', '400')
+            # Handle percentage and other non-numeric values
+            try:
+                svg_width = float(width_str.rstrip('%px'))
+                if '%' in width_str:
+                    svg_width = 1000  # Default for percentage
+            except (ValueError, AttributeError):
+                svg_width = 1000
+            try:
+                svg_height = float(height_str.rstrip('%px'))
+                if '%' in height_str:
+                    svg_height = 400  # Default for percentage
+            except (ValueError, AttributeError):
+                svg_height = 400
+        else:
+            svg_width = float(viewbox_parts[2])
+            svg_height = float(viewbox_parts[3])
+        
+        # Calculate scaling
+        scale_x = width / svg_width
+        scale_y = height / svg_height
+        scale = min(scale_x, scale_y) * 0.9
+        
+        # Calculate offset to center
+        offset_x = (width - svg_width * scale) / 2
+        offset_y = (height - svg_height * scale) / 2
+        
+        # Find all path elements
+        paths = []
+        for elem in root.iter():
+            if elem.tag.endswith('path'):
+                d = elem.get('d', '')
+                stroke = elem.get('stroke', 'black')
+                stroke_width = float(elem.get('stroke-width', '2'))
+                paths.append((d, stroke, stroke_width))
+        
+        # Create PIL image
+        img = Image.new('RGB', (width, height), 'white')
+        draw = ImageDraw.Draw(img)
+        
+        # Parse and render each path
+        for path_data, stroke_color, stroke_width in paths:
+            if not path_data:
+                continue
+            
+            # Parse path data - handle M (move) and L (line) commands
+            commands = re.findall(r'[ML][^ML]*', path_data)
+            
+            # Track separate stroke segments
+            stroke_segments = []
+            current_segment = []
+            
+            for cmd in commands:
+                if cmd.startswith('M'):
+                    # Move command - start new segment
+                    if current_segment:
+                        stroke_segments.append(current_segment)
+                        current_segment = []
+                    
+                    coords_str = cmd[1:].strip()
+                    if coords_str:
+                        try:
+                            x, y = map(float, coords_str.split(','))
+                            current_segment.append([x * scale + offset_x, y * scale + offset_y])
+                        except:
+                            continue
+                            
+                elif cmd.startswith('L'):
+                    # Line command - add to current segment
+                    coords_str = cmd[1:].strip()
+                    if coords_str:
+                        try:
+                            x, y = map(float, coords_str.split(','))
+                            current_segment.append([x * scale + offset_x, y * scale + offset_y])
+                        except:
+                            continue
+            
+            # Add final segment
+            if current_segment:
+                stroke_segments.append(current_segment)
+            
+            # Draw each segment separately
+            scaled_width = max(2, int(stroke_width * scale))
+            for segment in stroke_segments:
+                if len(segment) > 1:
+                    # Convert to flat list for PIL
+                    points = []
+                    for pt in segment:
+                        points.append(tuple(pt))
+                    
+                    # Draw the line with proper width
+                    draw.line(points, fill=stroke_color, width=scaled_width, joint='curve')
+        
+        # Save as JPEG
+        img.save(jpeg_file_path, 'JPEG', quality=95)
+        return True
+        
+    except Exception as e:
+        print(f"SVG to JPEG conversion error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 # Add gan folder to path to import Hand class
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -363,42 +500,63 @@ def generate_htr():
             
             # Display the actual SVG handwriting in canvas
             try:
-                # Try to parse and render SVG directly
-                if parse_and_render_svg(output_path, preview, 600, 300):
-                    conversion_method = "Direct SVG Rendering"
-                    
-                    # Also try to save a JPG version using fallback methods
-                    jpg_path = output_path.replace('.svg', '.jpg')
+                # Convert SVG to JPEG first
+                jpg_path = output_path.replace('.svg', '.jpg')
+                
+                if svg_to_jpeg(output_path, jpg_path, 1200, 600):
+                    # Load and display the JPEG in the preview canvas
                     try:
-                        # Try Wand for JPG conversion
-                        from wand.image import Image as WandImage
-                        with WandImage(filename=output_path) as wand_img:
-                            wand_img.format = 'jpeg'
-                            wand_img.background_color = 'white'
-                            wand_img.save(filename=jpg_path)
-                    except Exception:
-                        # Create a simple JPG using PIL as fallback
-                        img = Image.new('RGB', (800, 400), 'white')
-                        draw = ImageDraw.Draw(img)
-                        try:
-                            font = ImageFont.truetype("arial.ttf", 14)
-                        except:
-                            font = ImageFont.load_default()
+                        jpg_img = Image.open(jpg_path)
                         
-                        y_pos = 30
-                        for i, line in enumerate(lines):
-                            if y_pos > 350:
-                                break
-                            draw.text((20, y_pos), f"{i+1}. {line}", fill='black', font=font)
-                            y_pos += 30
-                        img.save(jpg_path, 'JPEG', quality=95)
-                    
-                    # Update info textbox
-                    info_text.config(state=tk.NORMAL)
-                    info_text.delete(1.0, tk.END)
-                    
-                    actual_style = styles[0] if styles else "No style"
-                    info_content = f"""✅ Handwriting Generated and Displayed!
+                        # Resize to fit canvas while maintaining aspect ratio
+                        canvas_width = 600
+                        canvas_height = 300
+                        img_width, img_height = jpg_img.size
+                        
+                        scale = min(canvas_width / img_width, canvas_height / img_height)
+                        new_width = int(img_width * scale)
+                        new_height = int(img_height * scale)
+                        
+                        jpg_img = jpg_img.resize((new_width, new_height), Image.LANCZOS)
+                        
+                        # Convert to PhotoImage
+                        photo = ImageTk.PhotoImage(jpg_img)
+                        
+                        # Clear canvas and display image
+                        preview.delete("all")
+                        preview.create_rectangle(0, 0, canvas_width, canvas_height, fill='white', outline='')
+                        
+                        # Center the image
+                        x_offset = (canvas_width - new_width) // 2
+                        y_offset = (canvas_height - new_height) // 2
+                        
+                        preview.create_image(x_offset, y_offset, anchor=tk.NW, image=photo)
+                        preview.image = photo  # Keep reference to prevent garbage collection
+                        
+                        conversion_method = "JPEG Image Display"
+                        
+                    except Exception as img_error:
+                        print(f"Failed to load JPEG: {img_error}")
+                        # Fallback to SVG rendering if JPEG loading fails
+                        if parse_and_render_svg(output_path, preview, 600, 300):
+                            conversion_method = "Direct SVG Rendering"
+                        else:
+                            raise Exception("Both JPEG and SVG rendering failed")
+                else:
+                    # If JPEG conversion failed, try SVG rendering
+                    print("JPEG conversion failed, trying SVG rendering")
+                    if parse_and_render_svg(output_path, preview, 600, 300):
+                        conversion_method = "Direct SVG Rendering"
+                        jpg_path = output_path.replace('.svg', '.jpg')
+                    else:
+                        raise Exception("Both JPEG and SVG rendering failed")
+                
+                # Update info textbox
+                info_text.config(state=tk.NORMAL)
+                info_text.delete(1.0, tk.END)
+                
+                actual_style = styles[0] if styles else "No style"
+                info_content = f"""✅ Handwriting Generated and Displayed!
 
 📝 Text Lines: {len(lines)}
 🎨 Style Used: {actual_style}
@@ -407,23 +565,20 @@ def generate_htr():
 📊 Character Count: {len(content)}
 ⚙️ Bias Setting: 0.75 (fixed)
 🖥️ Display: {conversion_method}
-🎨 Handwriting: Rendered directly from SVG
+🎨 Handwriting: Loaded as JPEG image
 
 Generated Lines:
 """
-                    
-                    for i, line in enumerate(lines, 1):
-                        info_content += f"{i}. {line}\n"
-                    
-                    info_content += f"\n✅ Files saved and handwriting displayed\n💡 Both SVG and JPG versions available"
-                    
-                    info_text.insert(tk.END, info_content)
-                    info_text.config(state=tk.DISABLED)
-                    
-                    messagebox.showinfo("Generate HTR", f"Handwriting generated and displayed!\nLines: {len(lines)}\nStyle: {actual_style}\nDisplay: SVG Rendered")
-                    
-                else:
-                    raise Exception("SVG parsing failed")
+                
+                for i, line in enumerate(lines, 1):
+                    info_content += f"{i}. {line}\n"
+                
+                info_content += f"\n✅ Files saved and handwriting displayed\n💡 Both SVG and JPG versions available"
+                
+                info_text.insert(tk.END, info_content)
+                info_text.config(state=tk.DISABLED)
+                
+                messagebox.showinfo("Generate HTR", f"Handwriting generated and displayed!\nLines: {len(lines)}\nStyle: {actual_style}\nDisplay: {conversion_method}")
                 
             except Exception as display_error:
                 # Fallback: show enhanced text-based preview
@@ -496,8 +651,47 @@ Generated Lines:
             
             messagebox.showerror("Generation Error", f"Failed to generate handwriting:\n{str(e)}")
 
+    def export_files():
+        """Export both SVG and JPEG files to user-chosen location"""
+        svg_path = os.path.join(os.path.dirname(__file__), '..', 'temp_handwriting.svg')
+        jpg_path = os.path.join(os.path.dirname(__file__), '..', 'temp_handwriting.jpg')
+        
+        if not os.path.exists(svg_path):
+            messagebox.showwarning("Export Files", "No files to export. Please generate handwriting first.")
+            return
+        
+        from tkinter import filedialog
+        
+        # Ask for directory to save files
+        save_dir = filedialog.askdirectory(title="Select folder to export files")
+        
+        if save_dir:
+            try:
+                import shutil
+                exported_files = []
+                
+                # Export SVG
+                svg_dest = os.path.join(save_dir, 'handwriting.svg')
+                shutil.copy2(svg_path, svg_dest)
+                exported_files.append(f"✓ handwriting.svg")
+                
+                # Export JPEG if it exists
+                if os.path.exists(jpg_path):
+                    jpg_dest = os.path.join(save_dir, 'handwriting.jpg')
+                    shutil.copy2(jpg_path, jpg_dest)
+                    exported_files.append(f"✓ handwriting.jpg")
+                
+                files_list = "\n".join(exported_files)
+                messagebox.showinfo("Export Complete", f"Files exported successfully to:\n{save_dir}\n\nExported files:\n{files_list}")
+                
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed to export files:\n{str(e)}")
+
     generate_btn = tk.Button(form, text="Generate", command=on_generate)
     generate_btn.grid(row=4, column=0, sticky="w", pady=(10, 0))
+    
+    export_btn = tk.Button(form, text="Export Files", command=export_files)
+    export_btn.grid(row=4, column=1, sticky="w", pady=(10, 0), padx=(10, 0))
 
     # Preview canvas (placed after generate)
     tk.Label(form, text="Preview:").grid(row=5, column=0, sticky="w", pady=(10, 0))
