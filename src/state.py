@@ -26,6 +26,7 @@ btn_annotate = None
 btn_next = None
 btn_prev = None
 btn_htr = None
+btn_char_annotate = None
 label = None
 
 # Annotation window state
@@ -36,3 +37,9 @@ text_box = None
 
 # Processing state
 finalrowsbbx = []
+
+# Image scale for word detection
+image_scale = 1.0
+scale_slider = None
+bbox_padding = 0
+padding_slider = None

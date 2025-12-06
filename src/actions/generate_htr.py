@@ -123,8 +123,8 @@ def parse_and_render_svg(svg_file_path, canvas, canvas_width=600, canvas_height=
         print(f"SVG parsing error: {e}")
         return False
 
-def svg_to_jpeg(svg_file_path, jpeg_file_path, width=1200, height=600):
-    """Convert SVG file to JPEG by rendering the handwriting paths"""
+def svg_to_jpeg(svg_file_path, jpeg_file_path, width=800, height=800):
+    """Convert SVG file to JPEG by rendering the handwriting paths with thick strokes for word detection"""
     try:
         # Read and parse SVG file
         with open(svg_file_path, 'r', encoding='utf-8') as f:
@@ -157,10 +157,10 @@ def svg_to_jpeg(svg_file_path, jpeg_file_path, width=1200, height=600):
             svg_width = float(viewbox_parts[2])
             svg_height = float(viewbox_parts[3])
         
-        # Calculate scaling
+        # Calculate scaling - use full scale without padding reduction
         scale_x = width / svg_width
         scale_y = height / svg_height
-        scale = min(scale_x, scale_y) * 0.9
+        scale = min(scale_x, scale_y) * 0.85
         
         # Calculate offset to center
         offset_x = (width - svg_width * scale) / 2
@@ -175,11 +175,11 @@ def svg_to_jpeg(svg_file_path, jpeg_file_path, width=1200, height=600):
                 stroke_width = float(elem.get('stroke-width', '2'))
                 paths.append((d, stroke, stroke_width))
         
-        # Create PIL image
+        # Create PIL image with white background
         img = Image.new('RGB', (width, height), 'white')
         draw = ImageDraw.Draw(img)
         
-        # Parse and render each path
+        # Parse and render each path with thicker strokes for better detection
         for path_data, stroke_color, stroke_width in paths:
             if not path_data:
                 continue
@@ -220,8 +220,9 @@ def svg_to_jpeg(svg_file_path, jpeg_file_path, width=1200, height=600):
             if current_segment:
                 stroke_segments.append(current_segment)
             
-            # Draw each segment separately
-            scaled_width = max(2, int(stroke_width * scale))
+            # Draw each segment with thicker strokes for better word detection
+            # Minimum stroke width of 3 for visibility
+            scaled_width = max(3, int(stroke_width * scale * 1.5))
             for segment in stroke_segments:
                 if len(segment) > 1:
                     # Convert to flat list for PIL
@@ -229,10 +230,10 @@ def svg_to_jpeg(svg_file_path, jpeg_file_path, width=1200, height=600):
                     for pt in segment:
                         points.append(tuple(pt))
                     
-                    # Draw the line with proper width
-                    draw.line(points, fill=stroke_color, width=scaled_width, joint='curve')
+                    # Draw the line with proper width - use black for maximum contrast
+                    draw.line(points, fill='black', width=scaled_width, joint='curve')
         
-        # Save as JPEG
+        # Save as JPEG with high quality
         img.save(jpeg_file_path, 'JPEG', quality=95)
         return True
         
@@ -577,6 +578,14 @@ Generated Lines:
                 
                 info_text.insert(tk.END, info_content)
                 info_text.config(state=tk.DISABLED)
+                
+                # Enable the "Detect words..." button and sliders
+                if S.btn_save:
+                    S.btn_save["state"] = "normal"
+                if S.scale_slider:
+                    S.scale_slider["state"] = "normal"
+                if S.padding_slider:
+                    S.padding_slider["state"] = "normal"
                 
                 messagebox.showinfo("Generate HTR", f"Handwriting generated and displayed!\nLines: {len(lines)}\nStyle: {actual_style}\nDisplay: {conversion_method}")
                 

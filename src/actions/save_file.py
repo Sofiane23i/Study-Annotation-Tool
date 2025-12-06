@@ -15,15 +15,61 @@ def save_file():
     S.finalrowsbbx = []
     src_dir = S.pathDirectory
     dst_dir = S.directorytmp
-    print(S.list_of_files[S.pos])
-    shutil.copy(S.list_of_files[S.pos], dst_dir)
+    
+    # Check if we have a loaded image or if we should use GAN-generated image
+    gan_jpg_path = os.path.join(os.path.dirname(__file__), '..', 'temp_handwriting.jpg')
+    gan_jpg_path = os.path.abspath(gan_jpg_path)
+    
+    use_gan_image = False
+    source_image_path = None
+    
+    if S.list_of_files and len(S.list_of_files) > S.pos:
+        # Use loaded image
+        source_image_path = S.list_of_files[S.pos]
+        print(source_image_path)
+    elif os.path.exists(gan_jpg_path):
+        # Use GAN-generated image
+        source_image_path = gan_jpg_path
+        print(f"Using GAN-generated image: {gan_jpg_path}")
+        use_gan_image = True
+    else:
+        print("No image available for word detection")
+        return
+    
+    # Create temp directories if not already set up
+    if not S.directorytmp or not os.path.exists(S.directorytmp):
+        base_dir = os.path.join(os.path.dirname(__file__), '..', 'gan_output_data')
+        S.directorytmp = os.path.abspath(os.path.join(base_dir, 'tmp'))
+        S.directoryout = os.path.abspath(os.path.join(base_dir, 'out'))
+        os.makedirs(S.directorytmp, exist_ok=True)
+        os.makedirs(S.directoryout, exist_ok=True)
+        dst_dir = S.directorytmp
+    
+    # Apply scale to image before saving to temp directory
+    scale = getattr(S, 'image_scale', 1.0)
+    print(f"Applying image scale: {scale}")
+    
+    # Load and scale the image
+    source_img = Image.open(source_image_path)
+    if scale != 1.0:
+        new_width = int(source_img.width * scale)
+        new_height = int(source_img.height * scale)
+        source_img = source_img.resize((new_width, new_height), Image.LANCZOS)
+    
+    # Save scaled image to temp directory
+    scaled_img_path = os.path.join(dst_dir, 'scaled_input.jpg')
+    source_img.save(scaled_img_path, 'JPEG', quality=95)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
     args = parser.parse_args([])  # avoid consuming argv of the main app/window
 
+    # Use absolute path for model weights
+    model_weights_path = os.path.join(os.path.dirname(__file__), '..', '..', 'model', 'weights')
+    model_weights_path = os.path.abspath(model_weights_path)
+    
     net = WordDetectorNet()
-    net.load_state_dict(torch.load('../model/weights', map_location=args.device))
+    net.load_state_dict(torch.load(model_weights_path, map_location=args.device))
     net.eval()
     net.to(args.device)
 
@@ -36,6 +82,11 @@ def save_file():
     img = None
     aabbs = None
     immg = None
+    
+    # Get padding value from state
+    padding = getattr(S, 'bbox_padding', 0)
+    print(f"Applying bounding box padding: {padding}")
+    
     for i, (_img, _aabbs) in enumerate(zip(res.batch_imgs, res.batch_aabbs)):
         listoflist = []
         finallistoflist = []
@@ -46,8 +97,16 @@ def save_file():
         print(img.shape)
         break
 
+    # Get image dimensions for bounds checking
+    img_height, img_width = img.shape[:2]
+
     for ii in aabbs:
-        listoflist.append([ii.xmin, ii.ymin, ii.xmax, ii.ymax])
+        # Apply padding to bounding boxes
+        xmin = max(0, ii.xmin - padding)
+        ymin = max(0, ii.ymin - padding)
+        xmax = min(img_width, ii.xmax + padding)
+        ymax = min(img_height, ii.ymax + padding)
+        listoflist.append([xmin, ymin, xmax, ymax])
         listoflist2 = sorted(listoflist, key=lambda x: (x[1]))
         listoflist3 = sorted(listoflist, key=lambda x: (x[0]))
         listoflist22 = listoflist2
@@ -88,14 +147,33 @@ def save_file():
     PIL_image = Image.fromarray(np.uint8(imgplot)).convert('RGB')
 
     img2 = ImageTk.PhotoImage(PIL_image.resize((800, 800)))
-    S.label.configure(image=img2)
+    
+    # Create or recreate label if it doesn't exist or was destroyed
+    import tkinter as tk
+    try:
+        if S.label is None:
+            raise ValueError("Label is None")
+        # Check if widget still exists
+        S.label.winfo_exists()
+        S.label.configure(image=img2)
+    except (tk.TclError, ValueError):
+        # Label was destroyed or doesn't exist, create a new one
+        # Clear any existing children in txt_edit
+        for widget in S.txt_edit.winfo_children():
+            widget.destroy()
+        S.label = tk.Label(S.txt_edit, image=img2)
+        S.label.grid(row=0, column=0)
+    
     S.label.image = img2
 
     files = glob.glob(S.directorytmp + '/*')
     for f in files:
         os.remove(f)
 
-    if S.btn_save:
-        S.btn_save["state"] = "disabled"
+    # Keep detect words enabled so user can retry with different scale
     if S.btn_annotate:
         S.btn_annotate["state"] = "normal"
+    if S.btn_htr:
+        S.btn_htr["state"] = "disabled"
+    if S.btn_open:
+        S.btn_open["state"] = "disabled"

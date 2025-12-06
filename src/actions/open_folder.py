@@ -52,6 +52,10 @@ def init_pathandfolders():
         S.btn_annotate["state"] = "disabled"
     if S.btn_save:
         S.btn_save["state"] = "normal"
+    if S.scale_slider:
+        S.scale_slider["state"] = "normal"
+    if S.padding_slider:
+        S.padding_slider["state"] = "normal"
     if S.btn_prev:
         S.btn_prev["state"] = "disabled"
     if S.btn_next:

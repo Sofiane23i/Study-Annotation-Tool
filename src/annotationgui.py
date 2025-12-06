@@ -86,31 +86,171 @@ def annotate_legacy():
  
 
 window = tk.Tk()
-window.title("Simple Text Annotation")
+window.title("Study Annotation Tool - Handwriting Analysis")
 window.rowconfigure(0, minsize=800, weight=1)
 window.columnconfigure(1, minsize=800, weight=1)
+window.configure(bg='#2c3e50')
 
+# Define colors for modern look
+COLORS = {
+    'bg_dark': '#2c3e50',
+    'bg_panel': '#34495e',
+    'bg_section': '#3d566e',
+    'accent': '#3498db',
+    'accent_hover': '#2980b9',
+    'success': '#27ae60',
+    'warning': '#f39c12',
+    'danger': '#e74c3c',
+    'text_light': '#ecf0f1',
+    'text_muted': '#95a5a6',
+    'border': '#4a6785'
+}
 
+# Custom button style function
+def create_styled_button(parent, text, command=None, style='normal', width=18):
+    colors = {
+        'normal': ('#3498db', '#2980b9', 'white'),
+        'success': ('#27ae60', '#219a52', 'white'),
+        'warning': ('#f39c12', '#d68910', 'white'),
+        'danger': ('#e74c3c', '#c0392b', 'white'),
+        'secondary': ('#7f8c8d', '#6c7a7b', 'white')
+    }
+    bg, hover, fg = colors.get(style, colors['normal'])
+    
+    btn = tk.Button(parent, text=text, command=command,
+                    bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
+                    font=('Segoe UI', 10, 'bold'), relief=tk.FLAT,
+                    cursor='hand2', width=width, pady=8)
+    
+    def on_enter(e):
+        if btn['state'] != 'disabled':
+            btn['bg'] = hover
+    def on_leave(e):
+        if btn['state'] != 'disabled':
+            btn['bg'] = bg
+    
+    btn.bind('<Enter>', on_enter)
+    btn.bind('<Leave>', on_leave)
+    return btn
 
+# Main content area
+txt_edit = tk.Frame(window, bg=COLORS['bg_dark'])
 
+# Sidebar panel with sections
+fr_buttons = tk.Frame(window, bg=COLORS['bg_panel'], relief=tk.FLAT, bd=0, padx=10, pady=10)
 
-txt_edit = tk.Frame(window)
-fr_buttons = tk.Frame(window, relief=tk.RAISED, bd=2)
-btn_open = tk.Button(fr_buttons, text="Open", command=init_pathandfolders)
-btn_htr = tk.Button(fr_buttons, text="GenerateHTR", command=generate_htr)
-btn_save = tk.Button(fr_buttons, text="Detect words...", command=save_file)
-btn_annotate = tk.Button(fr_buttons, text="Annotate...", command=annotate)
+# App title in sidebar
+title_frame = tk.Frame(fr_buttons, bg=COLORS['bg_panel'])
+title_frame.pack(fill=tk.X, pady=(0, 15))
+tk.Label(title_frame, text="📝 Annotation Tool", font=('Segoe UI', 14, 'bold'), 
+         bg=COLORS['bg_panel'], fg=COLORS['text_light']).pack()
+tk.Label(title_frame, text="Handwriting Analysis Suite", font=('Segoe UI', 9), 
+         bg=COLORS['bg_panel'], fg=COLORS['text_muted']).pack()
 
-btn_open.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-btn_htr.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
-btn_save.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
-btn_annotate.grid(row=3, column=0, sticky="ew", padx=5, pady=55)
+# Separator
+tk.Frame(fr_buttons, height=2, bg=COLORS['border']).pack(fill=tk.X, pady=10)
 
-fr_buttons.grid(row=0, column=0, sticky="ns")
+# Section 1: Input Sources
+section1 = tk.LabelFrame(fr_buttons, text=" 📂 Input Source ", font=('Segoe UI', 10, 'bold'),
+                         bg=COLORS['bg_section'], fg=COLORS['text_light'], 
+                         relief=tk.FLAT, bd=1, padx=10, pady=10)
+section1.pack(fill=tk.X, pady=(0, 10))
+
+btn_open = create_styled_button(section1, "📁 Open Folder", init_pathandfolders, 'normal')
+btn_open.pack(fill=tk.X, pady=3)
+
+btn_htr = create_styled_button(section1, "✍️ Generate HTR", generate_htr, 'success')
+btn_htr.pack(fill=tk.X, pady=3)
+
+# Section 2: Word Detection
+section2 = tk.LabelFrame(fr_buttons, text=" 🔍 Word Detection ", font=('Segoe UI', 10, 'bold'),
+                         bg=COLORS['bg_section'], fg=COLORS['text_light'], 
+                         relief=tk.FLAT, bd=1, padx=10, pady=10)
+section2.pack(fill=tk.X, pady=(0, 10))
+
+btn_save = create_styled_button(section2, "🎯 Detect Words", save_file, 'warning')
+btn_save.pack(fill=tk.X, pady=3)
+
+# Detection parameters frame
+params_frame = tk.Frame(section2, bg=COLORS['bg_section'])
+params_frame.pack(fill=tk.X, pady=(10, 5))
+
+# Scale slider with label
+scale_frame = tk.Frame(params_frame, bg=COLORS['bg_section'])
+scale_frame.pack(fill=tk.X, pady=2)
+scale_label = tk.Label(scale_frame, text="🔎 Scale: 1.0x", font=('Segoe UI', 9),
+                       bg=COLORS['bg_section'], fg=COLORS['text_light'], anchor='w')
+scale_label.pack(fill=tk.X)
+scale_slider = tk.Scale(scale_frame, from_=0.5, to=3.0, resolution=0.1, 
+                        orient=tk.HORIZONTAL, length=150,
+                        bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                        troughcolor=COLORS['bg_dark'], activebackground=COLORS['accent'],
+                        highlightthickness=0, sliderrelief=tk.FLAT)
+scale_slider.set(1.0)
+scale_slider.pack(fill=tk.X)
+
+def update_scale_label(val):
+    S.image_scale = float(val)
+    scale_label.config(text=f"🔎 Scale: {float(val):.1f}x")
+
+scale_slider.config(command=update_scale_label)
+
+# Padding slider with label  
+padding_frame = tk.Frame(params_frame, bg=COLORS['bg_section'])
+padding_frame.pack(fill=tk.X, pady=2)
+padding_label = tk.Label(padding_frame, text="📏 Padding: 0px", font=('Segoe UI', 9),
+                         bg=COLORS['bg_section'], fg=COLORS['text_light'], anchor='w')
+padding_label.pack(fill=tk.X)
+padding_slider = tk.Scale(padding_frame, from_=-20, to=50, resolution=1,
+                          orient=tk.HORIZONTAL, length=150,
+                          bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                          troughcolor=COLORS['bg_dark'], activebackground=COLORS['accent'],
+                          highlightthickness=0, sliderrelief=tk.FLAT)
+padding_slider.set(0)
+padding_slider.pack(fill=tk.X)
+
+def update_padding_label(val):
+    S.bbox_padding = int(float(val))
+    padding_label.config(text=f"📏 Padding: {int(float(val))}px")
+
+padding_slider.config(command=update_padding_label)
+
+# Section 3: Annotation
+section3 = tk.LabelFrame(fr_buttons, text=" ✏️ Annotation ", font=('Segoe UI', 10, 'bold'),
+                         bg=COLORS['bg_section'], fg=COLORS['text_light'], 
+                         relief=tk.FLAT, bd=1, padx=10, pady=10)
+section3.pack(fill=tk.X, pady=(0, 10))
+
+btn_annotate = create_styled_button(section3, "📝 Word Annotation", annotate, 'success')
+btn_annotate.pack(fill=tk.X, pady=3)
+
+btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", None, 'secondary')
+btn_char_annotate.pack(fill=tk.X, pady=3)
+
+# Status bar at bottom of sidebar
+status_frame = tk.Frame(fr_buttons, bg=COLORS['bg_panel'])
+status_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(20, 0))
+tk.Frame(status_frame, height=1, bg=COLORS['border']).pack(fill=tk.X, pady=(0, 10))
+status_label = tk.Label(status_frame, text="Ready", font=('Segoe UI', 9),
+                        bg=COLORS['bg_panel'], fg=COLORS['text_muted'])
+status_label.pack()
+
+# Grid layout
+fr_buttons.grid(row=0, column=0, sticky="nsew")
 txt_edit.grid(row=0, column=1, sticky="nsew")
 
+# Initial button states
 btn_annotate["state"] = "disabled"
 btn_save["state"] = "disabled"
+btn_char_annotate["state"] = "disabled"
+scale_slider["state"] = "disabled"
+padding_slider["state"] = "disabled"
+
+# Update status helper function
+def update_status(message):
+    status_label.config(text=message)
+
+S.update_status = update_status
 
 # register UI elements into shared state for callbacks
 S.window = window
@@ -122,14 +262,10 @@ S.btn_next = None
 S.btn_prev = None
 S.btn_save = btn_save
 S.btn_annotate = btn_annotate
+S.btn_char_annotate = btn_char_annotate
+S.scale_slider = scale_slider
+S.padding_slider = padding_slider
 
-
-#Convert To PhotoImage
-'''
-img = ImageTk.PhotoImage(Image.open("../data/testpng/bg00102.jpg").resize((800, 800)))
-label= tk.Label(txt_edit,image= img)
-label.grid()
-'''
 
 # Load background image with proper error handling
 try:
@@ -152,31 +288,39 @@ try:
             continue
     
     if img1 is None:
-        # Create a simple placeholder image if no image found
-        placeholder = Image.new('RGB', (800, 800), color='lightgray')
+        # Create a styled placeholder image
+        from PIL import ImageDraw, ImageFont
+        placeholder = Image.new('RGB', (800, 800), color='#34495e')
+        draw = ImageDraw.Draw(placeholder)
+        
+        # Add welcome text
+        try:
+            font_large = ImageFont.truetype("arial.ttf", 36)
+            font_small = ImageFont.truetype("arial.ttf", 18)
+        except:
+            font_large = ImageFont.load_default()
+            font_small = font_large
+        
+        # Center text
+        draw.text((400, 350), "📝 Study Annotation Tool", fill='#ecf0f1', anchor='mm', font=font_large)
+        draw.text((400, 400), "Select an input source to begin", fill='#95a5a6', anchor='mm', font=font_small)
+        draw.text((400, 440), "• Open Folder - Load images from disk", fill='#7f8c8d', anchor='mm', font=font_small)
+        draw.text((400, 470), "• Generate HTR - Create synthetic handwriting", fill='#7f8c8d', anchor='mm', font=font_small)
+        
         img1 = ImageTk.PhotoImage(placeholder)
-        print("Created placeholder image")
+        print("Created styled placeholder image")
         
 except Exception as e:
     print(f"Image loading error: {e}")
-    # Create a simple colored background as ultimate fallback
-    placeholder = Image.new('RGB', (800, 800), color='lightblue')
+    placeholder = Image.new('RGB', (800, 800), color='#34495e')
     img1 = ImageTk.PhotoImage(placeholder)
 
-#Create a Label widget
-label= tk.Label(txt_edit,image= img1)
-label.grid()
+# Create main content label with styled background
+content_frame = tk.Frame(txt_edit, bg=COLORS['bg_dark'], padx=20, pady=20)
+content_frame.pack(expand=True, fill=tk.BOTH)
+
+label = tk.Label(content_frame, image=img1, bg=COLORS['bg_dark'])
+label.pack(expand=True)
 S.label = label
-'''
-img = Image.open("../data/testpng/bg00102.jpg")
-img = img.resize((800, 800))
-tkimage = ImageTk.PhotoImage(img)
-tk.Label(txt_edit, image=tkimage).grid()
-''''''
-if pos == 0:
-    btn_prev["state"] = "disabled"
-else:
-    btn_prev["state"] = "enable"
-'''    
         
 window.mainloop()
