@@ -224,7 +224,8 @@ section3.pack(fill=tk.X, pady=(0, 10))
 btn_annotate = create_styled_button(section3, "📝 Word Annotation", annotate, 'success')
 btn_annotate.pack(fill=tk.X, pady=3)
 
-btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", None, 'secondary')
+from actions.character_annotate import character_annotate
+btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", character_annotate, 'secondary')
 btn_char_annotate.pack(fill=tk.X, pady=3)
 
 # Status bar at bottom of sidebar
@@ -242,7 +243,7 @@ txt_edit.grid(row=0, column=1, sticky="nsew")
 # Initial button states
 btn_annotate["state"] = "disabled"
 btn_save["state"] = "disabled"
-btn_char_annotate["state"] = "disabled"
+btn_char_annotate["state"] = "normal"
 scale_slider["state"] = "disabled"
 padding_slider["state"] = "disabled"
 

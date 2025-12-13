@@ -41,6 +41,8 @@ def annotation_file():
             S.btn_save["state"] = "normal"
         if S.btn_annotate:
             S.btn_annotate["state"] = "disabled"
+        if S.btn_char_annotate:
+            S.btn_char_annotate["state"] = "normal"
         if S.btn_htr:
             S.btn_htr["state"] = "normal"
         if S.btn_open:
@@ -70,6 +72,8 @@ def annotation_file():
                 S.btn_save["state"] = "normal"
             if S.btn_annotate:
                 S.btn_annotate["state"] = "disabled"
+            if S.btn_char_annotate:
+                S.btn_char_annotate["state"] = "normal"
             from PIL import Image, ImageTk
             img2 = ImageTk.PhotoImage(Image.open(S.list_of_files[S.pos]).resize((800, 800)))
             S.label.configure(image=img2)
