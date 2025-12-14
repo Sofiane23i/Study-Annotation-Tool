@@ -430,21 +430,34 @@ def generate_htr():
                 messagebox.showerror("Model Initialization Error", error_msg)
                 return
             
-            # Split content into lines (max 75 chars each) FIRST
+            # Split content into lines respecting user newlines, then wrap each to max 75 chars
             lines = []
-            words = content.split()
-            current_line = ""
-            
-            for word in words:
-                if len(current_line + " " + word) <= 75:
-                    current_line = current_line + " " + word if current_line else word
-                else:
-                    if current_line:
-                        lines.append(current_line)
-                    current_line = word
-            
-            if current_line:
-                lines.append(current_line)
+            maxlen = 75
+            for input_line in content.splitlines():
+                # preserve blank/empty lines
+                if input_line.strip() == "":
+                    lines.append("")
+                    continue
+                words = input_line.split()
+                current_line = ""
+                for word in words:
+                    # account for space when joining
+                    add_len = len(word) + (1 if current_line else 0)
+                    if len(current_line) + add_len <= maxlen:
+                        current_line = (current_line + " " + word) if current_line else word
+                    else:
+                        if current_line:
+                            lines.append(current_line)
+                        # if the single word is longer than maxlen, split the word
+                        if len(word) > maxlen:
+                            for i in range(0, len(word), maxlen):
+                                chunk = word[i:i+maxlen]
+                                lines.append(chunk)
+                            current_line = ""
+                        else:
+                            current_line = word
+                if current_line:
+                    lines.append(current_line)
             
             # Change to gan directory for model loading
             old_cwd = os.getcwd()

@@ -1,0 +1,42 @@
+{
+  "images": [
+    {
+      "id": 1,
+      "file_name": "temp_handwriting.jpg",
+      "width": 1200,
+      "height": 600
+    }
+  ],
+  "annotations": [
+    {
+      "id": 1,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        407,
+        134,
+        25,
+        32
+      ],
+      "area": 800,
+      "iscrowd": 0
+    },
+    {
+      "id": 2,
+      "image_id": 1,
+      "category_id": 2,
+      "bbox": [
+        478,
+        210,
+        11,
+        16
+      ],
+      "area": 176,
+      "iscrowd": 0
+    },
+    {
+      "id": 3,
+      "image_id": 1,
+      "category_id": 2,
+      "bbox": [
+        

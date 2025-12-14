@@ -43,7 +43,8 @@ class Hand(object):
         )
         self.nn.restore()
 
-    def write(self, filename, lines, biases=None, styles=None, stroke_colors=None, stroke_widths=None):
+    def write(self, filename, lines, biases=None, styles=None, stroke_colors=None, stroke_widths=None,
+              save_png=False, save_each_line_png=False, out_dir=None):
         valid_char_set = set(drawing.alphabet)
         for line_num, line in enumerate(lines):
             if len(line) > 75:
@@ -64,7 +65,16 @@ class Hand(object):
                     )
 
         strokes = self._sample(lines, biases=biases, styles=styles)
-        self._draw(strokes, lines, filename, stroke_colors=stroke_colors, stroke_widths=stroke_widths)
+        # ensure output directory
+        if out_dir is None:
+            out_dir = os.path.dirname(filename) or '.'
+        os.makedirs(out_dir, exist_ok=True)
+        result = self._draw(strokes, lines, filename, stroke_colors=stroke_colors,
+                             stroke_widths=stroke_widths,
+                             save_png=save_png,
+                             save_each_line_png=save_each_line_png,
+                             out_dir=out_dir)
+        return result
 
     def _sample(self, lines, biases=None, styles=None):
         num_samples = len(lines)
@@ -112,7 +122,8 @@ class Hand(object):
         samples = [sample[~np.all(sample == 0.0, axis=1)] for sample in samples]
         return samples
 
-    def _draw(self, strokes, lines, filename, stroke_colors=None, stroke_widths=None):
+    def _draw(self, strokes, lines, filename, stroke_colors=None, stroke_widths=None,
+              save_png=False, save_each_line_png=False, out_dir='.'):
         stroke_colors = stroke_colors or ['black']*len(lines)
         stroke_widths = stroke_widths or [2]*len(lines)
 
@@ -152,6 +163,56 @@ class Hand(object):
             initial_coord[1] -= line_height
 
         dwg.save()
+        # Optionally save PNG rasterizations
+        saved_files = {'svg': filename}
+        if save_png or save_each_line_png:
+            try:
+                # save combined image via matplotlib drawing.draw for better raster
+                import drawing as dr
+                # combined: draw each stroke offsets stacked vertically similar to SVG
+                combined_png = os.path.splitext(filename)[0] + '.png'
+                if save_png:
+                    import matplotlib.pyplot as plt
+                    fig_h = 3 * len(strokes)
+                    fig, axes = plt.subplots(len(strokes), 1, figsize=(12, fig_h))
+                    if len(strokes) == 1:
+                        axes = [axes]
+                    for ax, offsets_line, line_text in zip(axes, strokes, lines):
+                        coords = dr.offsets_to_coords(offsets_line)
+                        coords = dr.denoise(coords)
+                        if coords.size:
+                            stroke = []
+                            for x, y, eos in zip(*coords.T):
+                                stroke.append((x, y))
+                                if eos == 1:
+                                    xs, ys = zip(*stroke)
+                                    ax.plot(xs, ys, 'k')
+                                    stroke = []
+                            if stroke:
+                                xs, ys = zip(*stroke)
+                                ax.plot(xs, ys, 'k')
+                        ax.set_xlim(-50, 600)
+                        ax.set_ylim(-40, 40)
+                        ax.set_aspect('equal')
+                        ax.axis('off')
+                        ax.set_title(line_text)
+                    plt.tight_layout()
+                    plt.savefig(combined_png)
+                    plt.close(fig)
+                    saved_files['png'] = combined_png
+
+                if save_each_line_png:
+                    line_files = []
+                    for i, (offsets_line, line_text) in enumerate(zip(strokes, lines)):
+                        if offsets_line is None or len(offsets_line) == 0:
+                            continue
+                        line_png = os.path.join(out_dir, f"line_{i+1}.png")
+                        dr.draw(offsets_line, ascii_seq=line_text, align_strokes=True, denoise_strokes=True, save_file=line_png)
+                        line_files.append(line_png)
+                    saved_files['lines_png'] = line_files
+            except Exception as e:
+                print('PNG save skipped due to error:', e)
+        return {'strokes': strokes, 'files': saved_files}
 
 
 if __name__ == '__main__':
