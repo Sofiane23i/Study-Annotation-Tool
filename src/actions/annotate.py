@@ -72,4 +72,78 @@ def annotate():
 
     button1_window = canvas.create_window(rowindex + 55, colindex + 110, anchor=tk.NW, window=button1)
 
+    # --- GAN autofill logic using GAN input text but in 7-line batches ---
+    import tkinter.messagebox as messagebox
+    import state as Sstate
+    if (not S.list_of_files or len(S.list_of_files) <= S.pos):
+        try:
+            gan_input = getattr(Sstate, 'gan_input_text', None)
+            if gan_input:
+                # Reuse the same wrapping logic as generate_htr to produce logical lines
+                maxlen = 75
+                wrapped_lines = []
+                for input_line in gan_input.splitlines():
+                    if input_line.strip() == "":
+                        wrapped_lines.append("")
+                        continue
+                    words_line = input_line.split()
+                    current_line = ""
+                    for word in words_line:
+                        add_len = len(word) + (1 if current_line else 0)
+                        if len(current_line) + add_len <= maxlen:
+                            current_line = (current_line + " " + word) if current_line else word
+                        else:
+                            if current_line:
+                                wrapped_lines.append(current_line)
+                            if len(word) > maxlen:
+                                for i in range(0, len(word), maxlen):
+                                    chunk = word[i:i+maxlen]
+                                    wrapped_lines.append(chunk)
+                                current_line = ""
+                            else:
+                                current_line = word
+                    if current_line:
+                        wrapped_lines.append(current_line)
+
+                # Group into batches of 7 lines (matching GAN output batches)
+                batch_size = 7
+                batches = [wrapped_lines[i:i+batch_size] for i in range(0, len(wrapped_lines), batch_size)]
+
+                # Extract words from batches in order (line by line)
+                words_in_order = []
+                for batch in batches:
+                    for line in batch:
+                        if line is None:
+                            continue
+                        parts = line.strip().split()
+                        for w in parts:
+                            if w:
+                                words_in_order.append(w)
+
+                # Fill entries with the words in order; tolerate mismatches by filling what we can
+                total_entries = len(S.entries)
+                if not words_in_order:
+                    messagebox.showwarning("GAN Annotation", "No words extracted from GAN input to autofill annotations.")
+                else:
+                    fill_count = min(total_entries, len(words_in_order))
+                    for i in range(fill_count):
+                        try:
+                            entry = S.entries[i]
+                            word = words_in_order[i]
+                            entry.delete(0, tk.END)
+                            entry.insert(0, word)
+                        except Exception:
+                            continue
+
+                    # Populate the side text box with the extracted words (one per line)
+                    S.text_box.delete("1.0", tk.END)
+                    S.text_box.insert(tk.END, "\n".join(words_in_order))
+
+                    # Warn if counts mismatch
+                    if len(words_in_order) != total_entries:
+                        messagebox.showwarning("GAN Annotation", f"Autofill applied for {fill_count} fields. GAN words: {len(words_in_order)}, annotation fields: {total_entries}.")
+
+        except Exception as e:
+            print(f"GAN batch autofill failed: {e}")
+
     S.r.mainloop()

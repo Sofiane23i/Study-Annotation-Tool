@@ -361,10 +361,12 @@ def generate_htr():
     # Generate action (placed before preview)
     def on_generate():
         content = text_area.get("1.0", "end-1c").strip()
+        # Store GAN input text globally for annotation autofill
+        import state as Sstate
+        Sstate.gan_input_text = content
         model = model_var.get()
         lang = lang_var.get()
         style_val = style_var.get()
-        
         if not content:
             messagebox.showinfo("Generate HTR", "Please enter some text in the textarea.")
             return
@@ -479,7 +481,7 @@ def generate_htr():
                 if style_val in available_styles:
                     styles = [style_val] * len(lines)
                 else:
-                    # Fallback: use no style (None) if requested style not available
+                # Fallback: use no style (None) if requested style not available
                     styles = None
                     if available_styles:
                         # Or use the first available style
@@ -513,153 +515,116 @@ def generate_htr():
                 os.chdir(old_cwd)
             
             # Display the actual SVG handwriting in canvas
-            try:
-                # Convert SVG to JPEG first
-                jpg_path = output_path.replace('.svg', '.jpg')
-                
-                if svg_to_jpeg(output_path, jpg_path, 1200, 600):
-                    # Load and display the JPEG in the preview canvas
+                # Generate in batches of 7 lines and save per-batch SVG/JPG files
+                batch_dir = os.path.abspath(os.path.join(current_dir, '..', 'gan_output_data', 'batch'))
+                os.makedirs(batch_dir, exist_ok=True)
+                batch_size = 7
+                batches = [lines[i:i+batch_size] for i in range(0, len(lines), batch_size)]
+
+                generated_files = []
+                for bidx, b_lines in enumerate(batches, start=1):
+                    b_lines = [l for l in b_lines]
+                    if not any(b_lines):
+                        continue
+
+                    out_svg = os.path.join(batch_dir, f'batch_{bidx}.svg')
+                    out_jpg = os.path.join(batch_dir, f'batch_{bidx}.jpg')
+                    biases_b = [0.75] * len(b_lines)
+                    styles_b = ([styles[0]] * len(b_lines)) if styles else None
+                    stroke_colors_b = ['black'] * len(b_lines)
+                    stroke_widths_b = [1] * len(b_lines)
+
+                    os.chdir(gan_dir)
                     try:
-                        jpg_img = Image.open(jpg_path)
-                        
-                        # Resize to fit canvas while maintaining aspect ratio
-                        canvas_width = 600
-                        canvas_height = 300
-                        img_width, img_height = jpg_img.size
-                        
-                        scale = min(canvas_width / img_width, canvas_height / img_height)
-                        new_width = int(img_width * scale)
-                        new_height = int(img_height * scale)
-                        
-                        jpg_img = jpg_img.resize((new_width, new_height), Image.LANCZOS)
-                        
-                        # Convert to PhotoImage
-                        photo = ImageTk.PhotoImage(jpg_img)
-                        
-                        # Clear canvas and display image
-                        preview.delete("all")
-                        preview.create_rectangle(0, 0, canvas_width, canvas_height, fill='white', outline='')
-                        
-                        # Center the image
-                        x_offset = (canvas_width - new_width) // 2
-                        y_offset = (canvas_height - new_height) // 2
-                        
-                        preview.create_image(x_offset, y_offset, anchor=tk.NW, image=photo)
-                        preview.image = photo  # Keep reference to prevent garbage collection
-                        
-                        conversion_method = "JPEG Image Display"
-                        
-                    except Exception as img_error:
-                        print(f"Failed to load JPEG: {img_error}")
-                        # Fallback to SVG rendering if JPEG loading fails
-                        if parse_and_render_svg(output_path, preview, 600, 300):
-                            conversion_method = "Direct SVG Rendering"
-                        else:
-                            raise Exception("Both JPEG and SVG rendering failed")
-                else:
-                    # If JPEG conversion failed, try SVG rendering
-                    print("JPEG conversion failed, trying SVG rendering")
-                    if parse_and_render_svg(output_path, preview, 600, 300):
-                        conversion_method = "Direct SVG Rendering"
-                        jpg_path = output_path.replace('.svg', '.jpg')
-                    else:
-                        raise Exception("Both JPEG and SVG rendering failed")
-                
-                # Update info textbox
-                info_text.config(state=tk.NORMAL)
-                info_text.delete(1.0, tk.END)
-                
-                actual_style = styles[0] if styles else "No style"
-                info_content = f"""✅ Handwriting Generated and Displayed!
+                        hand.write(
+                            filename=out_svg,
+                            lines=b_lines,
+                            biases=biases_b,
+                            styles=styles_b,
+                            stroke_colors=stroke_colors_b,
+                            stroke_widths=stroke_widths_b
+                        )
+                    finally:
+                        os.chdir(old_cwd)
 
-📝 Text Lines: {len(lines)}
-🎨 Style Used: {actual_style}
-📁 SVG File: {output_path}
-🖼️ JPG File: {jpg_path}
-📊 Character Count: {len(content)}
-⚙️ Bias Setting: 0.75 (fixed)
-🖥️ Display: {conversion_method}
-🎨 Handwriting: Loaded as JPEG image
+                    try:
+                        svg_to_jpeg(out_svg, out_jpg, 1200, 600)
+                    except Exception:
+                        pass
 
-Generated Lines:
-"""
-                
-                for i, line in enumerate(lines, 1):
-                    info_content += f"{i}. {line}\n"
-                
-                info_content += f"\n✅ Files saved and handwriting displayed\n💡 Both SVG and JPG versions available"
-                
-                info_text.insert(tk.END, info_content)
-                info_text.config(state=tk.DISABLED)
-                
-                # Enable the "Detect words..." button and sliders
-                if S.btn_save:
-                    S.btn_save["state"] = "normal"
-                if S.scale_slider:
-                    S.scale_slider["state"] = "normal"
-                if S.padding_slider:
-                    S.padding_slider["state"] = "normal"
-                
-                messagebox.showinfo("Generate HTR", f"Handwriting generated and displayed!\nLines: {len(lines)}\nStyle: {actual_style}\nDisplay: {conversion_method}")
-                
-            except Exception as display_error:
-                # Fallback: show enhanced text-based preview
-                preview.delete("all")
-                
-                # Create a nice background
-                preview.create_rectangle(0, 0, 600, 300, fill='#f8f9fa', outline='#dee2e6')
-                
-                # Title
-                preview.create_text(300, 20, text="Generated Handwriting Content", 
-                                  fill="#495057", justify=tk.CENTER, font=("Arial", 14, "bold"))
-                
-                # Show the text lines in a handwriting-like layout
-                y_start = 50
-                line_height = 25
-                
-                for i, line in enumerate(lines[:8]):  # Show max 8 lines
-                    y_pos = y_start + (i * line_height)
-                    if y_pos > 270:
-                        break
-                    
-                    # Line number
-                    preview.create_text(20, y_pos, text=f"{i+1}.", 
-                                      anchor=tk.W, fill="#6c757d", font=("Arial", 9))
-                    
-                    # Text content
-                    display_line = line[:70] + '...' if len(line) > 70 else line
-                    preview.create_text(40, y_pos, text=display_line, 
-                                      anchor=tk.W, fill="#212529", font=("Courier", 10))
-                
-                if len(lines) > 8:
-                    preview.create_text(40, 270, text=f"... and {len(lines)-8} more lines in SVG file", 
-                                      anchor=tk.W, fill="#6c757d", font=("Arial", 8, "italic"))
-                
-                # Footer note
-                preview.create_text(300, 285, text=f"SVG file: {os.path.basename(output_path)}", 
-                                  fill="#6c757d", justify=tk.CENTER, font=("Arial", 8))
-                
-                # Update info textbox with error details
-                info_text.config(state=tk.NORMAL)
-                info_text.delete(1.0, tk.END)
-                actual_style = styles[0] if styles else "No style"
-                info_content = f"""⚠️ Generation completed - Text preview shown
+                    generated_files.append((out_svg, out_jpg, b_lines))
 
-📝 Text Lines: {len(lines)}
-🎨 Style Used: {actual_style}
-📁 SVG File: {output_path}
-❌ Display Note: Showing text preview (SVG contains actual handwriting)
+                # Show first generated batch in preview (if any)
+                try:
+                    if not generated_files:
+                        raise Exception("No valid batches generated")
 
-Generated Lines:
-"""
-                for i, line in enumerate(lines, 1):
-                    info_content += f"{i}. {line}\n"
-                info_content += f"\n✅ SVG file saved successfully\n💡 Open the SVG file to view the actual handwriting\n🔧 Display error: {str(display_error)[:100]}..."
+                    first_svg, first_jpg, _ = generated_files[0]
+
+                    # Populate shared batch image list (prefer JPG when available)
+                    S.gan_batch_images = [jp if os.path.exists(jp) else sv for sv, jp, _ in generated_files]
+                    S.gan_batch_index = 0
+                    # Show first batch using the shared helper
+                    try:
+                        show_batch_image(0)
+                    except Exception:
+                        # fallback: attempt direct JPG open
+                        if os.path.exists(first_jpg):
+                            jpg_img = Image.open(first_jpg)
+                            canvas_width = 600
+                            canvas_height = 300
+                            img_width, img_height = jpg_img.size
+                            scale = min(canvas_width / img_width, canvas_height / img_height)
+                            new_width = int(img_width * scale)
+                            new_height = int(img_height * scale)
+                            jpg_img = jpg_img.resize((new_width, new_height), Image.LANCZOS)
+                            photo = ImageTk.PhotoImage(jpg_img)
+                            preview.delete("all")
+                            preview.create_rectangle(0, 0, canvas_width, canvas_height, fill='white', outline='')
+                            x_offset = (canvas_width - new_width) // 2
+                            y_offset = (canvas_height - new_height) // 2
+                            preview.create_image(x_offset, y_offset, anchor=tk.NW, image=photo)
+                            preview.image = photo
+
+                    info_text.config(state=tk.NORMAL)
+                    info_text.delete(1.0, tk.END)
+                    actual_style = styles[0] if styles else "No style"
+                    info_content = f"✅ Handwriting Generated (batch mode)\n\nBatches: {len(generated_files)}\nStyle: {actual_style}\nFiles saved to: {batch_dir}\n"
+                    for i, (sv, jp, bl) in enumerate(generated_files, 1):
+                        info_content += f"Batch {i}: {len(bl)} lines → {os.path.basename(jp) if os.path.exists(jp) else os.path.basename(sv)}\n"
+                    info_text.insert(tk.END, info_content)
+                    info_text.config(state=tk.DISABLED)
+
+                    if S.btn_save:
+                        S.btn_save["state"] = "normal"
+                    if S.scale_slider:
+                        S.scale_slider["state"] = "normal"
+                    if S.padding_slider:
+                        S.padding_slider["state"] = "normal"
+
+                    messagebox.showinfo("Generate HTR", f"Handwriting generated and saved into: {batch_dir}\nBatches: {len(generated_files)}")
+
+                except Exception as display_error:
+                    preview.delete("all")
+                    preview.create_rectangle(0, 0, 600, 300, fill='#f8f9fa', outline='#dee2e6')
+                    preview.create_text(300, 20, text="Generated Handwriting Content", fill="#495057", justify=tk.CENTER, font=("Arial", 14, "bold"))
+                    y_start = 50
+                    line_height = 25
+                    for i, line in enumerate(lines[:8]):
+                        y_pos = y_start + (i * line_height)
+                        if y_pos > 270:
+                            break
+                        preview.create_text(20, y_pos, text=f"{i+1}.", anchor=tk.W, fill="#6c757d", font=("Arial", 9))
+                        display_line = line[:70] + '...' if len(line) > 70 else line
+                        preview.create_text(40, y_pos, text=display_line, anchor=tk.W, fill="#212529", font=("Courier", 10))
+                    if len(lines) > 8:
+                        preview.create_text(40, 270, text=f"... and {len(lines)-8} more lines", anchor=tk.W, fill="#6c757d", font=("Arial", 8, "italic"))
+                    info_text.config(state=tk.NORMAL)
+                    info_text.delete(1.0, tk.END)
+                    info_text.insert(tk.END, f"⚠️ Generation completed - text preview shown\n\nError: {str(display_error)}\nBatches attempted: {len(batches)}")
+                    info_text.config(state=tk.DISABLED)
                 
-                info_text.insert(tk.END, info_content)
-                info_text.config(state=tk.DISABLED)
-                
-                messagebox.showinfo("Generate HTR", f"Handwriting generated!\nLines: {len(lines)}\nStyle: {actual_style}\nFile: {output_path}\nNote: Text preview shown")
+            # (previous single-file display fallback removed; batch preview handled above)
             
         except Exception as e:
             preview.delete("all")
@@ -727,8 +692,70 @@ Generated Lines:
     info_text.insert(tk.END, "Generation information will appear here...")
     info_text.config(state=tk.DISABLED)
 
-    # Draw a simple placeholder in preview
-    preview.create_text(300, 150, text="Preview Area", fill="#999")
+
+    # Try to load the first saved GAN-generated image from gan_output_data/batch/
+    import glob
+    batch_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch'))
+    jpg_files = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
+
+    # Persistent list of batch images and index (store in shared state)
+    S.gan_batch_images = []
+    S.gan_batch_index = 0
+
+    def show_batch_image(idx):
+        if not hasattr(S, 'gan_batch_images') or not S.gan_batch_images:
+            preview.delete("all")
+            preview.create_text(300, 150, text="Preview Area", fill="#999")
+            return
+        idx = max(0, min(idx, len(S.gan_batch_images) - 1))
+        S.gan_batch_index = idx
+        path = S.gan_batch_images[idx]
+        preview.delete("all")
+        try:
+            if path.lower().endswith('.jpg') and os.path.exists(path):
+                img = Image.open(path)
+                canvas_width = 600
+                canvas_height = 300
+                img_width, img_height = img.size
+                scale = min(canvas_width / img_width, canvas_height / img_height)
+                new_width = int(img_width * scale)
+                new_height = int(img_height * scale)
+                img = img.resize((new_width, new_height), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                preview.create_rectangle(0, 0, canvas_width, canvas_height, fill='white', outline='')
+                x_offset = (canvas_width - new_width) // 2
+                y_offset = (canvas_height - new_height) // 2
+                preview.create_image(x_offset, y_offset, anchor=tk.NW, image=photo)
+                preview.image = photo
+            else:
+                # fallback to SVG rendering
+                if not parse_and_render_svg(path, preview, 600, 300):
+                    preview.create_text(300, 150, text="Preview failed", fill="red")
+        except Exception:
+            preview.create_text(300, 150, text="Preview failed", fill="red")
+
+    def prev_batch():
+        if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
+            show_batch_image(max(0, S.gan_batch_index - 1))
+
+    def next_batch():
+        if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
+            show_batch_image(min(len(S.gan_batch_images) - 1, S.gan_batch_index + 1))
+
+    # Navigation buttons
+    nav_frame = tk.Frame(form)
+    nav_frame.grid(row=6, column=4, sticky="nw", padx=(10,0))
+    prev_btn = tk.Button(nav_frame, text="Previous", command=prev_batch)
+    prev_btn.pack(side=tk.TOP, pady=(0,5))
+    next_btn = tk.Button(nav_frame, text="Next", command=next_batch)
+    next_btn.pack(side=tk.TOP)
+
+    # If there are saved JPGs on disk, populate and show first
+    if jpg_files:
+        S.gan_batch_images = jpg_files
+        show_batch_image(0)
+    else:
+        preview.create_text(300, 150, text="Preview Area", fill="#999")
 
     # Expand right panel if needed
     S.txt_edit.rowconfigure(0, weight=1)

@@ -19,16 +19,25 @@ def save_file():
     # Check if we have a loaded image or if we should use GAN-generated image
     gan_jpg_path = os.path.join(os.path.dirname(__file__), '..', 'temp_handwriting.jpg')
     gan_jpg_path = os.path.abspath(gan_jpg_path)
-    
+
+    # Prefer first JPG from gan_output_data/batch if available
+    batch_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch'))
+    batch_jpgs = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
+
     use_gan_image = False
     source_image_path = None
-    
+
     if S.list_of_files and len(S.list_of_files) > S.pos:
         # Use loaded image
         source_image_path = S.list_of_files[S.pos]
         print(source_image_path)
+    elif batch_jpgs:
+        # Use first GAN batch JPG
+        source_image_path = os.path.abspath(batch_jpgs[0])
+        print(f"Using GAN batch image: {source_image_path}")
+        use_gan_image = True
     elif os.path.exists(gan_jpg_path):
-        # Use GAN-generated image
+        # Use fallback GAN temporary image
         source_image_path = gan_jpg_path
         print(f"Using GAN-generated image: {gan_jpg_path}")
         use_gan_image = True

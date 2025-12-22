@@ -35,6 +35,9 @@ entries = []
 entryText = []
 text_box = None
 
+# GAN input text for autofill
+gan_input_text = None
+
 # Processing state
 finalrowsbbx = []
 
