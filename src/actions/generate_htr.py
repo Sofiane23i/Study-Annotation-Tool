@@ -601,6 +601,16 @@ def generate_htr():
                         S.scale_slider["state"] = "normal"
                     if S.padding_slider:
                         S.padding_slider["state"] = "normal"
+                    
+                    # Update main input text area with the generated content
+                    if hasattr(S, 'input_text_area') and S.input_text_area:
+                        S.input_text_area.delete("1.0", tk.END)
+                        S.input_text_area.insert("1.0", content)
+                        S.input_text = content
+                    
+                    # Enable line detection button
+                    if hasattr(S, 'btn_line_detect') and S.btn_line_detect:
+                        S.btn_line_detect["state"] = "normal"
 
                     messagebox.showinfo("Generate HTR", f"Handwriting generated and saved into: {batch_dir}\nBatches: {len(generated_files)}")
 
@@ -727,6 +737,10 @@ def generate_htr():
                 y_offset = (canvas_height - new_height) // 2
                 preview.create_image(x_offset, y_offset, anchor=tk.NW, image=photo)
                 preview.image = photo
+                
+                # Also update main window preview
+                if hasattr(S, 'update_preview_image') and S.update_preview_image:
+                    S.update_preview_image(image_path=path)
             else:
                 # fallback to SVG rendering
                 if not parse_and_render_svg(path, preview, 600, 300):

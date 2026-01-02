@@ -55,10 +55,28 @@ def character_annotate():
     ann_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     ann_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-    # Load full image (use S.full_image_path if provided, otherwise fallback to src/temp_handwriting.jpg or svg)
+    # Load full image (use S.full_image_path if provided, otherwise fallback to GAN batch images or temp files)
     full_img_path = getattr(S, 'full_image_path', None)
+    
+    # Priority 1: Check if user has loaded image from folder
+    if not full_img_path and S.list_of_files and len(S.list_of_files) > S.pos:
+        full_img_path = S.list_of_files[S.pos]
+    
+    # Priority 2: Check GAN batch images (most recent generation)
     if not full_img_path:
-        # common locations: src/temp_handwriting.jpg or src/temp_handwriting.svg
+        import glob
+        batch_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch'))
+        batch_jpgs = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
+        if batch_jpgs:
+            # Use first batch image or the one selected in GAN preview
+            batch_idx = getattr(S, 'gan_batch_index', 0)
+            if 0 <= batch_idx < len(batch_jpgs):
+                full_img_path = batch_jpgs[batch_idx]
+            else:
+                full_img_path = batch_jpgs[0]
+    
+    # Priority 3: Check temp_handwriting.jpg in src folder
+    if not full_img_path:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         jpg_candidate = os.path.join(base_dir, 'temp_handwriting.jpg')
         svg_candidate = os.path.join(base_dir, 'temp_handwriting.svg')
@@ -77,10 +95,13 @@ def character_annotate():
                     full_img_path = tmp_jpg
             except Exception:
                 full_img_path = None
+    
     if not full_img_path or not os.path.isfile(full_img_path):
-        messagebox.showerror("Error", "Full image file not found. Generate HTR first or set S.full_image_path.")
+        messagebox.showerror("Error", "No image found. Please:\n1. Generate HTR first, or\n2. Open a folder with images")
         S.r.destroy()
         return
+    
+    print(f"Character annotation loading image: {full_img_path}")
     boxes = []
     try:
         current_img = Image.open(full_img_path)

@@ -11,6 +11,10 @@ import state as S
 
 def save_file():
     print(S.pos)
+    
+    # Show progress
+    if hasattr(S, 'show_progress'):
+        S.show_progress(5, "Starting word detection...")
 
     S.finalrowsbbx = []
     src_dir = S.pathDirectory
@@ -69,6 +73,10 @@ def save_file():
     scaled_img_path = os.path.join(dst_dir, 'scaled_input.jpg')
     source_img.save(scaled_img_path, 'JPEG', quality=95)
 
+    # Update progress
+    if hasattr(S, 'show_progress'):
+        S.show_progress(20, "Loading detection model...")
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
     args = parser.parse_args([])  # avoid consuming argv of the main app/window
@@ -82,8 +90,16 @@ def save_file():
     net.eval()
     net.to(args.device)
 
+    # Update progress
+    if hasattr(S, 'show_progress'):
+        S.show_progress(40, "Detecting words...")
+
     loader = DataLoaderImgFile(Path(S.directorytmp), net.input_size, args.device)
     res = evaluate(net, loader, max_aabbs=1000)
+
+    # Update progress
+    if hasattr(S, 'show_progress'):
+        S.show_progress(60, "Processing bounding boxes...")
 
     print(res.batch_imgs)
     print(res.batch_aabbs)
@@ -136,10 +152,18 @@ def save_file():
         for jj in listoflist2:
             if (jj[0] > topleftbbx[0] and abs(jj[1] - topleftbbx[1]) < 17):
                 firstrowbbx.append(jj)
-        firstrowbbx = sorted(firstrowbbx, key=lambda x: (x[0]))
+        # Sort based on text direction (RTL vs LTR)
+        if getattr(S, 'text_direction', 'ltr') == 'rtl':
+            firstrowbbx = sorted(firstrowbbx, key=lambda x: -x[0])  # Right to left
+        else:
+            firstrowbbx = sorted(firstrowbbx, key=lambda x: x[0])   # Left to right
         for ii in firstrowbbx:
             S.finalrowsbbx.append(ii)
             listoflist2.remove(ii)
+
+    # Update progress
+    if hasattr(S, 'show_progress'):
+        S.show_progress(70, "Cropping words...")
 
     files = glob.glob(S.directoryout + '/*')
     for f in files:
@@ -150,6 +174,10 @@ def save_file():
         crop = immg.crop(box)
         S.nbr = S.nbr + 1
         crop.save(S.directoryout + '/%s.png' % (S.nbr - 1), 'png')
+
+    # Update progress
+    if hasattr(S, 'show_progress'):
+        S.show_progress(90, "Visualizing results...")
 
     from visualization import visualize
     imgplot = visualize(img, aabbs)
@@ -178,6 +206,12 @@ def save_file():
     files = glob.glob(S.directorytmp + '/*')
     for f in files:
         os.remove(f)
+
+    # Update progress - complete
+    if hasattr(S, 'show_progress'):
+        S.show_progress(100, f"Detected {len(S.finalrowsbbx)} words")
+    if hasattr(S, 'update_status') and S.update_status:
+        S.update_status(f"Detected {len(S.finalrowsbbx)} words | Ready to annotate")
 
     # Keep detect words enabled so user can retry with different scale
     if S.btn_annotate:
