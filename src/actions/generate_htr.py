@@ -273,29 +273,33 @@ finally:
 
 
 def generate_htr():
-    """Switch the right panel to an HTR generation view with:
+    """Build HTR generation interface inside the generate_htr_container.
     - a textarea
     - two dropdown lists
     - a canvas
     - a generate button
     """
-    if S.txt_edit is None:
+    # Check if container exists
+    if not hasattr(S, 'generate_htr_container') or S.generate_htr_container is None:
+        print("Error: generate_htr_container not found in state")
         return
-
-    # Clear the right panel
-    for child in S.txt_edit.winfo_children():
+    
+    container = S.generate_htr_container
+    
+    # Clear any existing content in the container
+    for child in container.winfo_children():
         child.destroy()
 
     # Container frames for layout
-    form = tk.Frame(S.txt_edit)
-    form.grid(row=0, column=0, sticky="nw", padx=10, pady=10)
+    form = tk.Frame(container, bg='#f0f0f0')
+    form.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
     # Textarea with character limit
-    tk.Label(form, text="Input Text:").grid(row=0, column=0, sticky="w")
+    tk.Label(form, text="Input Text:", bg='#f0f0f0').grid(row=0, column=0, sticky="w")
     text_area = tk.Text(form, width=60, height=10)
     text_area.grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 10))
     char_limit = 500
-    char_count_label = tk.Label(form, text=f"0/{char_limit}")
+    char_count_label = tk.Label(form, text=f"0/{char_limit}", bg='#f0f0f0')
     char_count_label.grid(row=1, column=3, sticky="e", padx=(10, 0))
 
     def update_counter():

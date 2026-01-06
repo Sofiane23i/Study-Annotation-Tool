@@ -24,9 +24,20 @@ def init_pathandfolders():
     
     if not S.list_of_files:
         messagebox.showwarning("No Images", f"No image files found in:\n{folder_selected}")
+        # Update folder info display
+        if hasattr(S, 'folder_path_var') and S.folder_path_var:
+            S.folder_path_var.set(folder_selected)
+        if hasattr(S, 'folder_info_var') and S.folder_info_var:
+            S.folder_info_var.set("No image files found in this folder")
         return
 
     print(f"Found {len(S.list_of_files)} images")
+
+    # Update folder info display
+    if hasattr(S, 'folder_path_var') and S.folder_path_var:
+        S.folder_path_var.set(folder_selected)
+    if hasattr(S, 'folder_info_var') and S.folder_info_var:
+        S.folder_info_var.set(f"✓ Found {len(S.list_of_files)} images")
 
     # Update preview using new system
     if hasattr(S, 'update_preview_image') and S.update_preview_image:
@@ -38,7 +49,7 @@ def init_pathandfolders():
         S.label.image = img2
     
     # Update image info
-    if hasattr(S, 'image_info_var'):
+    if hasattr(S, 'image_info_var') and S.image_info_var:
         S.image_info_var.set(f"Image 1 of {len(S.list_of_files)} | {os.path.basename(S.list_of_files[S.pos])}")
     
     # Update status
@@ -57,9 +68,7 @@ def init_pathandfolders():
     if not os.path.exists(S.directorydone):
         os.makedirs(S.directorydone)
 
-    # Update button states
-    if hasattr(S, 'btn_open') and S.btn_open:
-        S.btn_open["state"] = "disabled"
+    # Update button states - keep btn_open enabled for loading different folders
     if hasattr(S, 'btn_annotate') and S.btn_annotate:
         S.btn_annotate["state"] = "normal"
     if hasattr(S, 'btn_save') and S.btn_save:

@@ -153,17 +153,71 @@ tk.Label(title_frame, text="Handwriting Analysis Suite", font=('Segoe UI', 9),
 # Separator
 tk.Frame(fr_buttons, height=2, bg=COLORS['border']).pack(fill=tk.X, pady=10)
 
-# Section 1: Input Sources
-section1 = tk.LabelFrame(fr_buttons, text=" 📂 Input Source ", font=('Segoe UI', 10, 'bold'),
+# Section 1: Input Mode Toggle
+section1 = tk.LabelFrame(fr_buttons, text=" 📂 Input Mode ", font=('Segoe UI', 10, 'bold'),
                          bg=COLORS['bg_section'], fg=COLORS['text_light'], 
                          relief=tk.FLAT, bd=1, padx=10, pady=10)
 section1.pack(fill=tk.X, pady=(0, 10))
 
-btn_open = create_styled_button(section1, "📁 Open Folder", init_pathandfolders, 'normal')
-btn_open.pack(fill=tk.X, pady=3)
+# Mode toggle variable
+input_mode_var = tk.StringVar(value="load")  # "load" or "generate"
 
-btn_htr = create_styled_button(section1, "✍️ Generate HTR", generate_htr, 'success')
-btn_htr.pack(fill=tk.X, pady=3)
+# Toggle button frame
+toggle_frame = tk.Frame(section1, bg=COLORS['bg_section'])
+toggle_frame.pack(fill=tk.X, pady=3)
+
+def widget_exists(widget):
+    """Check if a tkinter widget still exists."""
+    try:
+        return widget is not None and widget.winfo_exists()
+    except:
+        return False
+
+def switch_to_load_mode():
+    input_mode_var.set("load")
+    btn_mode_load.config(bg=COLORS['accent'], fg='white', relief=tk.SUNKEN)
+    btn_mode_generate.config(bg=COLORS['bg_section'], fg=COLORS['text_light'], relief=tk.RAISED)
+    # Show load interface, hide generate interface
+    try:
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack_forget()
+        if widget_exists(S.load_image_container):
+            S.load_image_container.pack(expand=True, fill=tk.BOTH)
+    except Exception as e:
+        print(f"Error in switch_to_load_mode: {e}")
+
+def switch_to_generate_mode():
+    input_mode_var.set("generate")
+    btn_mode_generate.config(bg=COLORS['success'], fg='white', relief=tk.SUNKEN)
+    btn_mode_load.config(bg=COLORS['bg_section'], fg=COLORS['text_light'], relief=tk.RAISED)
+    # Show generate interface, hide load interface
+    try:
+        if widget_exists(S.load_image_container):
+            S.load_image_container.pack_forget()
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+        # Build the HTR interface inside the container
+        generate_htr()
+    except Exception as e:
+        print(f"Error in switch_to_generate_mode: {e}")
+
+btn_mode_load = tk.Button(toggle_frame, text="📁 Load Image", 
+                          command=switch_to_load_mode,
+                          bg=COLORS['accent'], fg='white',
+                          font=('Segoe UI', 9, 'bold'),
+                          relief=tk.SUNKEN, bd=1, padx=10, pady=5)
+btn_mode_load.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+btn_mode_generate = tk.Button(toggle_frame, text="✍️ Generate HTR", 
+                              command=switch_to_generate_mode,
+                              bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                              font=('Segoe UI', 9, 'bold'),
+                              relief=tk.RAISED, bd=1, padx=10, pady=5)
+btn_mode_generate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+
+# Store for backward compatibility
+btn_open = btn_mode_load
+btn_htr = btn_mode_generate
 
 # ============================================
 # LINE DETECTION FUNCTION
@@ -407,19 +461,73 @@ S.btn_line_detect = btn_line_detect
 
 
 # ============================================
-# MAIN CONTENT AREA - Input Text + Image Preview
+# MAIN CONTENT AREA - Two switchable interfaces
 # ============================================
 
-# Create main content frame with two sections
+# Create main content frame
 content_frame = tk.Frame(txt_edit, bg=COLORS['bg_dark'], padx=20, pady=20)
 content_frame.pack(expand=True, fill=tk.BOTH)
 
-# Top section: Input Text Area
-input_section = tk.LabelFrame(content_frame, text=" 📝 Input Text (ASCII Transcription) ", 
+# ============================================
+# CONTAINER 1: Load Image Interface
+# ============================================
+load_image_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
+load_image_container.pack(expand=True, fill=tk.BOTH)
+
+# Load Image Folder Section
+load_image_frame = tk.LabelFrame(load_image_container, text=" 📂 Load Image Folder ", 
+                                  font=('Segoe UI', 11, 'bold'),
+                                  bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                                  relief=tk.FLAT, bd=2, padx=10, pady=10)
+load_image_frame.pack(fill=tk.X, pady=(0, 10))
+
+load_inner_frame = tk.Frame(load_image_frame, bg=COLORS['bg_section'])
+load_inner_frame.pack(fill=tk.X)
+
+# Folder path display
+folder_path_var = tk.StringVar(value="No folder selected")
+folder_path_label = tk.Label(load_inner_frame, textvariable=folder_path_var,
+                             font=('Consolas', 10), bg='white', fg='#333',
+                             anchor='w', padx=10, pady=5, relief=tk.SUNKEN)
+folder_path_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+def load_image_folder_action():
+    """Load images from a folder and update the display."""
+    init_pathandfolders()
+    # Update folder path display
+    if S.pathDirectory:
+        folder_path_var.set(S.pathDirectory)
+    if S.list_of_files:
+        folder_info_var.set(f"Found {len(S.list_of_files)} images")
+
+btn_load_folder = tk.Button(load_inner_frame, text="📁 Browse Folder",
+                            command=load_image_folder_action,
+                            bg=COLORS['accent'], fg='white',
+                            font=('Segoe UI', 10, 'bold'),
+                            padx=15, pady=5)
+btn_load_folder.pack(side=tk.RIGHT)
+
+# Folder info
+folder_info_var = tk.StringVar(value="Select a folder containing handwriting images")
+folder_info_label = tk.Label(load_image_frame, textvariable=folder_info_var,
+                             font=('Segoe UI', 9), bg=COLORS['bg_section'], 
+                             fg=COLORS['text_muted'])
+folder_info_label.pack(anchor='w', pady=(5, 0))
+
+S.load_image_frame = load_image_frame
+S.folder_path_var = folder_path_var
+S.folder_info_var = folder_info_var
+S.load_image_container = load_image_container
+
+# Top section: Input Text Area (inside load_image_container)
+input_section = tk.LabelFrame(load_image_container, text=" 📝 Input Text (ASCII Transcription) ", 
                                font=('Segoe UI', 11, 'bold'),
                                bg=COLORS['bg_section'], fg=COLORS['text_light'],
                                relief=tk.FLAT, bd=2, padx=10, pady=10)
 input_section.pack(fill=tk.X, pady=(0, 10))
+
+# Store input_section in state for the toggle functions
+S.input_section = input_section
 
 # Text input with scrollbar
 text_frame = tk.Frame(input_section, bg=COLORS['bg_section'])
@@ -462,12 +570,15 @@ input_text_area.bind('<<Cut>>', lambda e: window.after(1, update_text_stats))
 S.input_text_area = input_text_area
 S.input_text = ""
 
-# Bottom section: Image Preview
-preview_section = tk.LabelFrame(content_frame, text=" 🖼️ Image Preview ", 
+# Bottom section: Image Preview (inside load_image_container)
+preview_section = tk.LabelFrame(load_image_container, text=" 🖼️ Image Preview ", 
                                  font=('Segoe UI', 11, 'bold'),
                                  bg=COLORS['bg_section'], fg=COLORS['text_light'],
                                  relief=tk.FLAT, bd=2, padx=10, pady=10)
 preview_section.pack(fill=tk.BOTH, expand=True)
+
+# Store preview_section in state for the toggle functions
+S.preview_section = preview_section
 
 # Create canvas for image preview with scrollbars
 preview_canvas_frame = tk.Frame(preview_section, bg=COLORS['bg_section'])
@@ -569,8 +680,17 @@ S.btn_prev_img = btn_prev_img
 S.btn_next_img = btn_next_img
 
 # Create a dummy label for backward compatibility
-label = tk.Label(content_frame)
+label = tk.Label(load_image_container)
 S.label = label
+
+# ============================================
+# CONTAINER 2: Generate HTR Interface (hidden by default)
+# ============================================
+generate_htr_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
+# Don't pack it initially - it will be shown when user clicks "Generate HTR"
+
+S.generate_htr_container = generate_htr_container
+S.content_frame = content_frame
 
 # ============================================
 # KEYBOARD SHORTCUTS
@@ -593,7 +713,7 @@ def setup_keyboard_shortcuts():
     def on_ctrl_g(event):
         """Ctrl+G: Generate HTR"""
         if S.shortcuts_enabled:
-            generate_htr()
+            switch_to_generate_mode()
             return 'break'
     
     def on_ctrl_a(event):

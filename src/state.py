@@ -34,6 +34,8 @@ label = None
 # Main content area
 input_text_area = None
 input_text = ""
+input_section = None
+preview_section = None
 preview_canvas = None
 current_preview_image = None
 current_image_path = None
@@ -41,6 +43,16 @@ update_preview_image = None
 image_info_var = None
 btn_prev_img = None
 btn_next_img = None
+
+# Load image folder section
+load_image_frame = None
+load_image_container = None
+folder_path_var = None
+folder_info_var = None
+
+# Generate HTR section
+generate_htr_container = None
+content_frame = None
 
 # Annotation window state
 r = None
