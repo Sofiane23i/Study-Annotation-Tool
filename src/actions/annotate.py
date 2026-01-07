@@ -1,6 +1,7 @@
 import os
 import tkinter as tk
 from PIL import Image, ImageTk
+from tkinter import messagebox
 import state as S
 from .generate_annotation import annotation_file
 from .import_annotation import import_annotaion
@@ -8,23 +9,35 @@ from .refreshing import refreshing
 
 
 def annotate():
-    S.r = tk.Toplevel()
-    S.r.title("Words Annotation")
+    """Render annotation UI inside main interface if container exists, else fallback to Toplevel."""
+    parent = getattr(S, 'annotation_body', None)
+    use_embed = parent is not None
 
-    canvas1 = tk.Canvas(S.r, height=1500, width=1500)
-    canvas1.pack()
+    if use_embed:
+        # Clear previous content
+        for w in parent.winfo_children():
+            w.destroy()
+        container = parent
+        S.r = container  # maintain existing references
+    else:
+        S.r = tk.Toplevel()
+        S.r.title("Words Annotation")
+        container = S.r
+
+    canvas1 = tk.Canvas(container, height=1500, width=1500, bg='#f7f9fc')
+    canvas1.pack(fill=tk.BOTH, expand=True)
 
     yscrollbar = tk.Scrollbar(canvas1)
     yscrollbar.grid(row=0, column=1, sticky=tk.N+tk.S)
 
-    canvas = tk.Canvas(canvas1, bd=0, yscrollcommand=yscrollbar.set)
+    canvas = tk.Canvas(canvas1, bd=0, yscrollcommand=yscrollbar.set, bg='#ffffff', highlightthickness=0)
     canvas.config(height=1000, width=1300, scrollregion=(0, 0, 1500, 2000))
 
     yscrollbar.config(command=canvas.yview)
 
     button1 = tk.Button(canvas, text="generateAnnotation", command=annotation_file)
 
-    canvas2 = tk.Canvas(canvas1, bd=0, yscrollcommand=yscrollbar.set)
+    canvas2 = tk.Canvas(canvas1, bd=0, yscrollcommand=yscrollbar.set, bg='#ffffff', highlightthickness=0)
     button2 = tk.Button(canvas2, text="importAnnotation", command=import_annotaion)
     button2.grid(row=0, column=2, sticky="ns", padx=5, pady=55)
 
@@ -43,7 +56,16 @@ def annotate():
     canvas.grid(row=0, column=0, sticky="ew")
     canvas2.grid(row=0, column=2)
 
-    print(len(os.listdir(S.directoryout + '/')))
+    out_dir = getattr(S, 'directoryout', None)
+    if not out_dir:
+        out_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'out'))
+        S.directoryout = out_dir
+    os.makedirs(out_dir, exist_ok=True)
+
+    crop_files = sorted([f for f in os.listdir(out_dir) if f.lower().endswith('.png')])
+    if not crop_files:
+        messagebox.showinfo("No word crops", "No cropped words found. Run word detection first.")
+        return
 
     img2 = []
     rowindex = 0
@@ -53,18 +75,23 @@ def annotate():
     S.entryText = []
 
     ent = 0
-    for jj in range(S.nbr - len(os.listdir(S.directoryout + '/')), S.nbr):
+    for fname in crop_files:
+        file_path = os.path.join(out_dir, fname)
         if cpt == 10:
             colindex = (colindex + 130)
             cpt = 0
             rowindex = 0
-        img2.append(ImageTk.PhotoImage(Image.open(S.directoryout + '/' + str(jj) + '.png').resize((100, 100))))
-        canvas.create_image(rowindex, colindex, anchor=tk.NW, image=img2[abs(S.nbr - len(os.listdir(S.directoryout + '/')) - jj)])
+        try:
+            thumb = Image.open(file_path).resize((100, 100))
+        except Exception:
+            continue
+        img2.append(ImageTk.PhotoImage(thumb))
+        canvas.create_image(rowindex, colindex, anchor=tk.NW, image=img2[-1])
 
         S.entryText.append(tk.StringVar())
-        S.entries.append(tk.Entry(S.r, width=13, textvariable=S.entryText[ent]))
+        S.entries.append(tk.Entry(container, width=13, textvariable=S.entryText[ent]))
 
-        canvas.create_window(rowindex + 55, colindex + 110, window=S.entries[abs(S.nbr - len(os.listdir(S.directoryout + '/')) - jj)])
+        canvas.create_window(rowindex + 55, colindex + 110, window=S.entries[-1])
 
         rowindex = (rowindex + 130)
         cpt = cpt + 1

@@ -465,6 +465,12 @@ section3.pack(fill=tk.X, pady=(0, 10))
 def annotate_words_and_advance():
     if not set_segmentation_mode('word'):
         return
+    if widget_exists(S.word_detect_container):
+        S.word_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
     annotate()
     auto_next_after_annotation()
 
@@ -476,6 +482,12 @@ from actions.line_annotate import line_annotate
 def annotate_lines_and_advance():
     if not set_segmentation_mode('line'):
         return
+    if widget_exists(S.word_detect_container):
+        S.word_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
     line_annotate()
     auto_next_after_annotation()
 
@@ -633,6 +645,12 @@ def back_to_image_view():
 def proceed_to_annotation_from_word_panel():
     if hasattr(S, 'perform_cropping_current_detection'):
         S.perform_cropping_current_detection()
+    if widget_exists(S.word_detect_container):
+        S.word_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
     annotate()
 
 btn_back_view = tk.Button(word_btn_frame, text="⬅ Back to image view", command=back_to_image_view,
@@ -646,6 +664,24 @@ btn_proceed_annotation.pack(side=tk.RIGHT, padx=4)
 # store in state for detection rendering
 S.word_detect_container = word_detect_container
 S.word_detect_canvas = word_canvas
+
+# ============================================
+# CONTAINER 3: Annotation Interface (hidden until annotation)
+# ============================================
+annotation_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
+annotation_container.pack_forget()
+
+annotation_header = tk.Label(annotation_container, text=" 📝 Annotation ",
+                              font=('Segoe UI', 12, 'bold'),
+                              bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                              relief=tk.FLAT, bd=1, padx=10, pady=8)
+annotation_header.pack(fill=tk.X, pady=(0, 10))
+
+annotation_body = tk.Frame(annotation_container, bg=COLORS['bg_dark'])
+annotation_body.pack(expand=True, fill=tk.BOTH)
+
+S.annotation_container = annotation_container
+S.annotation_body = annotation_body
 
 # Load Image Folder Section
 load_image_frame = tk.LabelFrame(load_image_container, text=" 📂 Load Image Folder ", 
