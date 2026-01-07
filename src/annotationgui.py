@@ -103,17 +103,19 @@ except Exception:
 
 # Define a simple two-tone palette (light base + blue accent)
 COLORS = {
-    'bg_dark': '#f7f9fc',       # main background
+    'bg_dark': '#f4f7fb',       # main background
     'bg_panel': '#ffffff',      # panels/cards
     'bg_section': '#ffffff',    # sections inside panels
-    'accent': '#1f7ae0',        # primary accent
-    'accent_hover': '#1666b8',
-    'success': '#1f7ae0',       # reuse accent to stay within two colors
-    'warning': '#1f7ae0',       # aligned to two-color theme
-    'danger': '#1f7ae0',        # aligned to two-color theme
-    'text_light': '#1a1f2b',
-    'text_muted': '#5c6570',
-    'border': '#d9e2ec'
+    'accent': '#6cb6ff',        # light blue accent
+    'accent_hover': '#4f8fe6',
+    'success': '#6cb6ff',       # keep within blue family
+    'warning': '#6cb6ff',       # keep within blue family
+    'danger': '#6cb6ff',        # keep within blue family
+    'text_light': '#0f172a',
+    'text_muted': '#60708a',
+    'border': '#e5e7eb',
+    'secondary_bg': '#e8f1fb',
+    'secondary_hover': '#d8e8f8'
 }
 
 # Custom button style function
@@ -123,7 +125,7 @@ def create_styled_button(parent, text, command=None, style='normal', width=18):
         'success': (COLORS['accent'], COLORS['accent_hover'], 'white'),
         'warning': (COLORS['accent'], COLORS['accent_hover'], 'white'),
         'danger': (COLORS['accent'], COLORS['accent_hover'], 'white'),
-        'secondary': ('#e9edf5', '#d9e2ec', COLORS['text_light'])
+        'secondary': (COLORS['secondary_bg'], COLORS['secondary_hover'], COLORS['text_light'])
     }
     bg, hover, fg = colors.get(style, colors['normal'])
     
@@ -187,6 +189,25 @@ def widget_exists(widget):
     except:
         return False
 
+
+def images_available():
+    """Return True if a folder is loaded or GAN images exist."""
+    has_loaded = hasattr(S, 'list_of_files') and S.list_of_files
+    has_gan = getattr(S, 'gan_generated_ready', False) and getattr(S, 'gan_batch_images', [])
+    return bool(has_loaded or has_gan)
+
+
+def ensure_images_available():
+    """Guard actions that require images; show guidance if none."""
+    if images_available():
+        return True
+    from tkinter import messagebox
+    messagebox.showinfo(
+        "No images available",
+        "Load an image folder or generate HTR images before using detection or annotation."
+    )
+    return False
+
 # Segmentation mode helpers
 def set_segmentation_mode(mode):
     """Lock segmentation mode after first choice (line or word)."""
@@ -232,7 +253,7 @@ def switch_to_load_mode():
             S.generate_htr_container.pack_forget()
         if widget_exists(S.load_image_container):
             S.load_image_container.pack(expand=True, fill=tk.BOTH)
-        # Reset preview to load-mode placeholder, then show current load image if available
+        # Show load placeholder or current load image; do not surface GAN preview in load mode
         if hasattr(S, 'show_preview_placeholder'):
             S.show_preview_placeholder(DEFAULT_PREVIEW_TEXT)
         # Reset segmentation choice when returning to load mode
@@ -248,6 +269,8 @@ def switch_to_load_mode():
                 S.image_info_var.set(f"Image {S.pos + 1} of {len(S.list_of_files)}")
         elif hasattr(S, 'image_info_var'):
             S.image_info_var.set("No images loaded")
+        if hasattr(S, 'update_detection_visibility'):
+            S.update_detection_visibility()
     except Exception as e:
         print(f"Error in switch_to_load_mode: {e}")
 
@@ -261,16 +284,27 @@ def switch_to_generate_mode():
             S.load_image_container.pack_forget()
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
-        # Clear preview so load-mode image does not linger
+        # Keep GAN preview if it exists; otherwise show generate placeholder
         if hasattr(S, 'show_preview_placeholder'):
-            S.show_preview_placeholder(GENERATE_PREVIEW_TEXT)
+            if getattr(S, 'gan_generated_ready', False) and getattr(S, 'gan_batch_images', []):
+                idx = min(max(getattr(S, 'gan_batch_index', 0), 0), len(S.gan_batch_images) - 1)
+                path = S.gan_batch_images[idx]
+                if hasattr(S, 'update_preview_image') and path:
+                    S.update_preview_image(path)
+            else:
+                S.show_preview_placeholder(GENERATE_PREVIEW_TEXT)
         if hasattr(S, 'image_info_var'):
-            S.image_info_var.set("Generate mode: waiting for output")
+            if getattr(S, 'gan_generated_ready', False) and getattr(S, 'gan_batch_images', []):
+                S.image_info_var.set("Generate mode: preview ready")
+            else:
+                S.image_info_var.set("Generate mode: waiting for output")
         S.segmentation_mode = None
         S.auto_detect_on_navigation = False
         segmentation_mode_var.set("Segmentation mode: not chosen")
         # Build the HTR interface inside the container
         generate_htr()
+        if hasattr(S, 'update_detection_visibility'):
+            S.update_detection_visibility()
     except Exception as e:
         print(f"Error in switch_to_generate_mode: {e}")
 
@@ -301,6 +335,9 @@ def detect_lines_with_autofill():
     with auto-filled text from input area.
     """
     from tkinter import messagebox
+
+    if not ensure_images_available():
+        return
     
     # Lock segmentation mode to line on first use
     if not set_segmentation_mode('line'):
@@ -379,7 +416,18 @@ btn_line_detect.pack(fill=tk.X, pady=3)
 def detect_words_with_mode_lock():
     if not set_segmentation_mode('word'):
         return
+    if not ensure_images_available():
+        return
+    # Require either loaded images or generated GAN previews before showing detection
+    has_loaded_images = hasattr(S, 'list_of_files') and S.list_of_files
+    has_gan_images = getattr(S, 'gan_generated_ready', False) and getattr(S, 'gan_batch_images', [])
+    if not (has_loaded_images or has_gan_images):
+        from tkinter import messagebox
+        messagebox.showinfo("No images available", "Load an image folder or generate HTR images before word detection.")
+        return
     # Swap to word-detection view
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack_forget()
     if widget_exists(S.load_image_container):
         S.load_image_container.pack_forget()
     if widget_exists(S.word_detect_container):
@@ -395,6 +443,8 @@ btn_save.pack(fill=tk.X, pady=3)
 
 def detect_characters():
     """Open character-level annotation/detection flow."""
+    if not ensure_images_available():
+        return
     character_annotate()
 
 btn_char_detect = create_styled_button(section2, "🔤 Detect Characters", detect_characters, 'secondary')
@@ -444,6 +494,29 @@ def update_padding_label(val):
 
 padding_slider.config(command=update_padding_label)
 
+
+def update_detection_visibility():
+    """Show/hide detection controls based on image availability."""
+    try:
+        available = images_available()
+        if available:
+            btn_line_detect.config(state='normal')
+            btn_save.config(state='normal')
+            btn_char_detect.config(state='normal')
+            scale_slider.config(state='normal')
+            padding_slider.config(state='normal')
+        else:
+            btn_line_detect.config(state='disabled')
+            btn_save.config(state='disabled')
+            btn_char_detect.config(state='disabled')
+            scale_slider.config(state='disabled')
+            padding_slider.config(state='disabled')
+        # ensure frame is packed
+        if not section2.winfo_manager():
+            section2.pack(fill=tk.X, pady=(0, 10))
+    except Exception as e:
+        print(f"update_detection_visibility error: {e}")
+
 def auto_next_after_annotation():
     """Move to next image and auto-run detection for the locked mode."""
     try:
@@ -456,6 +529,9 @@ def auto_next_after_annotation():
     except Exception:
         pass
 
+    # Ensure detection visibility tracked in shared state
+    S.update_detection_visibility = update_detection_visibility
+
 # Section 3: Annotation (after detection)
 section3 = tk.LabelFrame(fr_buttons, text=" ✏️ Annotation ", font=('Segoe UI', 10, 'bold'),
                          bg=COLORS['bg_section'], fg=COLORS['text_light'], 
@@ -463,6 +539,8 @@ section3 = tk.LabelFrame(fr_buttons, text=" ✏️ Annotation ", font=('Segoe UI
 section3.pack(fill=tk.X, pady=(0, 10))
 
 def annotate_words_and_advance():
+    if not ensure_images_available():
+        return
     if not set_segmentation_mode('word'):
         return
     if widget_exists(S.word_detect_container):
@@ -480,6 +558,8 @@ btn_annotate.config(state='disabled')
 
 from actions.line_annotate import line_annotate
 def annotate_lines_and_advance():
+    if not ensure_images_available():
+        return
     if not set_segmentation_mode('line'):
         return
     if widget_exists(S.word_detect_container):
@@ -496,7 +576,14 @@ btn_line_annotate.pack(fill=tk.X, pady=3)
 btn_line_annotate.config(state='disabled')
 
 from actions.character_annotate import character_annotate
-btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", character_annotate, 'secondary')
+
+def annotate_characters_with_save():
+    if not ensure_images_available():
+        return
+    save_generated_gan_images_if_needed()
+    character_annotate()
+
+btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", annotate_characters_with_save, 'secondary')
 btn_char_annotate.pack(fill=tk.X, pady=3)
 
 # Section 4: Settings
@@ -575,6 +662,7 @@ txt_edit.grid(row=0, column=1, sticky="nsew")
 btn_annotate["state"] = "disabled"
 btn_save["state"] = "disabled"
 btn_line_detect["state"] = "disabled"
+btn_char_detect["state"] = "disabled"
 btn_char_annotate["state"] = "normal"
 scale_slider["state"] = "disabled"
 padding_slider["state"] = "disabled"
@@ -601,6 +689,10 @@ S.btn_char_detect = btn_char_detect
 S.scale_slider = scale_slider
 S.padding_slider = padding_slider
 S.btn_line_detect = btn_line_detect
+
+# Initialize detection visibility at startup
+if hasattr(S, 'update_detection_visibility'):
+    S.update_detection_visibility()
 
 
 # ============================================
@@ -708,6 +800,8 @@ def load_image_folder_action():
         folder_path_var.set(S.pathDirectory)
     if S.list_of_files:
         folder_info_var.set(f"Found {len(S.list_of_files)} images")
+    if hasattr(S, 'update_detection_visibility'):
+        S.update_detection_visibility()
 
 btn_load_folder = tk.Button(load_inner_frame, text="📁 Browse Folder",
                             command=load_image_folder_action,

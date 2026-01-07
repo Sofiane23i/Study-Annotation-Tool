@@ -281,6 +281,13 @@ def generate_htr():
     - a canvas
     - a generate button
     """
+    # Preserve previously generated previews if they exist
+    prev_batch_images = getattr(S, 'gan_batch_images', [])
+    prev_generated_files = getattr(S, 'gan_generated_files', [])
+    prev_batch_index = getattr(S, 'gan_batch_index', 0)
+    prev_ready = getattr(S, 'gan_generated_ready', False)
+    prev_input_text = getattr(S, 'gan_input_text', "")
+
     # Check if container exists
     if not hasattr(S, 'generate_htr_container') or S.generate_htr_container is None:
         print("Error: generate_htr_container not found in state")
@@ -303,6 +310,15 @@ def generate_htr():
     char_limit = 500
     char_count_label = tk.Label(form, text=f"0/{char_limit}", bg='#f0f0f0')
     char_count_label.grid(row=1, column=3, sticky="e", padx=(10, 0))
+
+    # Pre-fill with previously entered GAN text if available
+    if prev_input_text:
+        text_area.insert("1.0", prev_input_text)
+        # Sync counter with restored text
+        def _init_counter():
+            clamp_to_limit()
+            update_counter()
+        S.window.after(10, _init_counter) if hasattr(S, 'window') else update_counter()
 
     def update_counter():
         length = len(text_area.get("1.0", "end-1c"))
@@ -376,6 +392,9 @@ def generate_htr():
         if not content:
             messagebox.showinfo("Generate HTR", "Please enter some text in the textarea.")
             return
+
+        # Reset preview readiness until generation completes
+        S.gan_generated_ready = False
             
         if Hand is None:
             current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -570,6 +589,11 @@ def generate_htr():
                     S.gan_batch_images = [jp if os.path.exists(jp) else sv for sv, jp, _ in generated_files]
                     S.gan_generated_files = generated_files
                     S.gan_batch_index = 0
+                    S.gan_generated_ready = True
+                    if hasattr(S, 'update_detection_visibility'):
+                        S.update_detection_visibility()
+                        if hasattr(S, 'window') and S.window:
+                            S.window.after(10, S.update_detection_visibility)
                     # Show first batch using the shared helper
                     try:
                         show_batch_image(0)
@@ -595,7 +619,7 @@ def generate_htr():
                     info_text.config(state=tk.NORMAL)
                     info_text.delete(1.0, tk.END)
                     actual_style = styles[0] if styles else "No style"
-                    info_content = f"✅ Handwriting Generated (preview)\n\nBatches: {len(generated_files)}\nStyle: {actual_style}\nNote: Click 'Save' in preview panel to store images to gan_output_data/batch\n"
+                    info_content = f"✅ Handwriting Generated (preview)\n\nBatches: {len(generated_files)}\nStyle: {actual_style}\n"
                     for i, (sv, jp, bl) in enumerate(generated_files, 1):
                         info_content += f"Batch {i}: {len(bl)} lines → {os.path.basename(jp) if os.path.exists(jp) else os.path.basename(sv)} (preview only)\n"
                     info_text.insert(tk.END, info_content)
@@ -608,17 +632,11 @@ def generate_htr():
                     if S.padding_slider:
                         S.padding_slider["state"] = "normal"
                     
-                    # Update main input text area with the generated content
-                    if hasattr(S, 'input_text_area') and S.input_text_area:
-                        S.input_text_area.delete("1.0", tk.END)
-                        S.input_text_area.insert("1.0", content)
-                        S.input_text = content
-                    
                     # Enable line detection button
                     if hasattr(S, 'btn_line_detect') and S.btn_line_detect:
                         S.btn_line_detect["state"] = "normal"
 
-                    messagebox.showinfo("Generate HTR", f"Handwriting generated for preview.\nUse the Save button in the preview panel to store files to gan_output_data/batch.")
+                    messagebox.showinfo("Generate HTR", "Handwriting generated for preview.")
 
                 except Exception as display_error:
                     preview.delete("all")
@@ -692,9 +710,32 @@ def generate_htr():
 
     generate_btn = tk.Button(form, text="Generate", command=on_generate)
     generate_btn.grid(row=4, column=0, sticky="w", pady=(10, 0))
-    
+
+    def reset_generation():
+        """Clear input, info, and any generated previews."""
+        text_area.delete("1.0", tk.END)
+        info_text.config(state=tk.NORMAL)
+        info_text.delete(1.0, tk.END)
+        info_text.insert(tk.END, "Generation information will appear here...")
+        info_text.config(state=tk.DISABLED)
+        preview.delete("all")
+        preview.create_text(300, 150, text="Preview Area", fill="#999")
+        S.gan_batch_images = []
+        S.gan_generated_files = []
+        S.gan_batch_index = 0
+        S.gan_generated_ready = False
+        S.gan_input_text = ""
+        # Reset main preview if it was showing GAN output
+        if hasattr(S, 'show_preview_placeholder'):
+            S.show_preview_placeholder("Generate mode active\n\nUse the Generate HTR panel to create synthetic handwriting")
+        if hasattr(S, 'update_detection_visibility'):
+            S.update_detection_visibility()
+
     export_btn = tk.Button(form, text="Export Files", command=export_files)
     export_btn.grid(row=4, column=1, sticky="w", pady=(10, 0), padx=(10, 0))
+
+    reset_btn = tk.Button(form, text="Reset", command=reset_generation)
+    reset_btn.grid(row=4, column=2, sticky="w", pady=(10, 0), padx=(10, 0))
 
     # Preview canvas (placed after generate)
     tk.Label(form, text="Preview:").grid(row=5, column=0, sticky="w", pady=(10, 0))
@@ -709,17 +750,21 @@ def generate_htr():
     info_text.config(state=tk.DISABLED)
 
 
-    # Try to load the first saved GAN-generated image from gan_output_data/batch/
+    # Prepare batch output directory reference
     import glob
     batch_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch'))
-    jpg_files = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
 
     # Persistent list of batch images and index (store in shared state)
-    S.gan_batch_images = []
-    S.gan_generated_files = []  # list of (svg, jpg, lines) matching gan_batch_images order
-    S.gan_batch_index = 0
+    S.gan_batch_images = prev_batch_images
+    S.gan_generated_files = prev_generated_files  # list of (svg, jpg, lines) matching gan_batch_images order
+    S.gan_batch_index = prev_batch_index if prev_batch_images else 0
+    S.gan_generated_ready = prev_ready
 
     def show_batch_image(idx):
+        if not getattr(S, 'gan_generated_ready', False):
+            preview.delete("all")
+            preview.create_text(300, 150, text="Preview Area", fill="#999")
+            return
         if not hasattr(S, 'gan_batch_images') or not S.gan_batch_images:
             preview.delete("all")
             preview.create_text(300, 150, text="Preview Area", fill="#999")
@@ -745,9 +790,7 @@ def generate_htr():
                 preview.create_image(x_offset, y_offset, anchor=tk.NW, image=photo)
                 preview.image = photo
                 
-                # Also update main window preview
-                if hasattr(S, 'update_preview_image') and S.update_preview_image:
-                    S.update_preview_image(image_path=path)
+                # Keep preview scoped to the generate panel only
             else:
                 # fallback to SVG rendering
                 if not parse_and_render_svg(path, preview, 600, 300):
@@ -763,7 +806,7 @@ def generate_htr():
         if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
             show_batch_image(min(len(S.gan_batch_images) - 1, S.gan_batch_index + 1))
 
-    # Navigation + save buttons
+    # Navigation buttons
     nav_frame = tk.Frame(form)
     nav_frame.grid(row=6, column=4, sticky="nw", padx=(10,0))
     prev_btn = tk.Button(nav_frame, text="Previous", command=prev_batch)
@@ -771,49 +814,9 @@ def generate_htr():
     next_btn = tk.Button(nav_frame, text="Next", command=next_batch)
     next_btn.pack(side=tk.TOP, pady=(0,5))
 
-    def save_current_preview():
-        """Save the currently previewed generated image to gan_output_data/batch on demand."""
-        if not (hasattr(S, 'gan_batch_images') and S.gan_batch_images):
-            messagebox.showinfo("Save", "No generated image to save. Generate first.")
-            return
-        idx = max(0, min(S.gan_batch_index, len(S.gan_batch_images) - 1))
-        src_img = S.gan_batch_images[idx]
-        # Find matching svg if we have generated_files tracked
-        src_svg = None
-        if hasattr(S, 'gan_generated_files') and S.gan_generated_files and idx < len(S.gan_generated_files):
-            src_svg = S.gan_generated_files[idx][0]
-
-        dest_dir = batch_dir
-        os.makedirs(dest_dir, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        base_name = f"batch_saved_{idx+1}_{timestamp}"
-        saved_files = []
-        try:
-            if src_img and os.path.exists(src_img):
-                dest_img = os.path.join(dest_dir, base_name + os.path.splitext(src_img)[1])
-                shutil.copy2(src_img, dest_img)
-                saved_files.append(os.path.basename(dest_img))
-            if src_svg and os.path.exists(src_svg):
-                dest_svg = os.path.join(dest_dir, base_name + ".svg")
-                shutil.copy2(src_svg, dest_svg)
-                saved_files.append(os.path.basename(dest_svg))
-        except Exception as e:
-            messagebox.showerror("Save Error", f"Failed to save image: {e}")
-            return
-
-        if saved_files:
-            messagebox.showinfo("Saved", "Saved files:\n" + "\n".join(saved_files))
-        else:
-            messagebox.showinfo("Save", "Nothing was saved (files missing).")
-
-    save_btn = tk.Button(nav_frame, text="Save", command=save_current_preview)
-    save_btn.pack(side=tk.TOP)
-
-    # If there are saved JPGs on disk, populate and show first
-    if jpg_files:
-        S.gan_batch_images = jpg_files
-        S.gan_generated_files = [(None, jp, None) for jp in jpg_files]
-        show_batch_image(0)
+    # Restore preview if we already have generated batches; otherwise placeholder
+    if S.gan_generated_ready and S.gan_batch_images:
+        show_batch_image(min(max(S.gan_batch_index, 0), len(S.gan_batch_images) - 1))
     else:
         preview.create_text(300, 150, text="Preview Area", fill="#999")
 

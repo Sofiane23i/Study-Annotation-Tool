@@ -77,6 +77,8 @@ def init_pathandfolders():
         S.scale_slider["state"] = "normal"
     if hasattr(S, 'padding_slider') and S.padding_slider:
         S.padding_slider["state"] = "normal"
+    if hasattr(S, 'btn_char_detect') and S.btn_char_detect:
+        S.btn_char_detect["state"] = "normal"
     if hasattr(S, 'btn_prev') and S.btn_prev:
         S.btn_prev["state"] = "disabled"
     if hasattr(S, 'btn_next') and S.btn_next:
@@ -90,5 +92,14 @@ def init_pathandfolders():
     if hasattr(S, 'segmentation_mode_var') and S.segmentation_mode_var:
         try:
             S.segmentation_mode_var.set("Segmentation mode: not chosen")
+        except Exception:
+            pass
+
+    # Update detection visibility if UI is available
+    if hasattr(S, 'update_detection_visibility'):
+        try:
+            S.update_detection_visibility()
+            if hasattr(S, 'window') and S.window:
+                S.window.after(10, S.update_detection_visibility)
         except Exception:
             pass
