@@ -1,4 +1,5 @@
 import os, shutil, argparse, glob
+import tkinter as tk
 from PIL import Image, ImageTk
 import numpy as np
 import torch
@@ -7,6 +8,7 @@ from net import WordDetectorNet
 from eval import evaluate
 from path import Path
 import state as S
+from actions.annotate import annotate
 
 
 def save_file():
@@ -163,45 +165,41 @@ def save_file():
 
     # Update progress
     if hasattr(S, 'show_progress'):
-        S.show_progress(70, "Cropping words...")
-
-    files = glob.glob(S.directoryout + '/*')
-    for f in files:
-        os.remove(f)
-
-    for ii in S.finalrowsbbx:
-        box = (ii[0], ii[1], ii[2], ii[3])
-        crop = immg.crop(box)
-        S.nbr = S.nbr + 1
-        crop.save(S.directoryout + '/%s.png' % (S.nbr - 1), 'png')
-
-    # Update progress
-    if hasattr(S, 'show_progress'):
-        S.show_progress(90, "Visualizing results...")
+        S.show_progress(80, "Previewing results...")
 
     from visualization import visualize
     imgplot = visualize(img, aabbs)
     PIL_image = Image.fromarray(np.uint8(imgplot)).convert('RGB')
 
-    img2 = ImageTk.PhotoImage(PIL_image.resize((800, 800)))
-    
-    # Create or recreate label if it doesn't exist or was destroyed
-    import tkinter as tk
-    try:
-        if S.label is None:
-            raise ValueError("Label is None")
-        # Check if widget still exists
-        S.label.winfo_exists()
-        S.label.configure(image=img2)
-    except (tk.TclError, ValueError):
-        # Label was destroyed or doesn't exist, create a new one
-        # Clear any existing children in txt_edit
-        for widget in S.txt_edit.winfo_children():
-            widget.destroy()
-        S.label = tk.Label(S.txt_edit, image=img2)
-        S.label.grid(row=0, column=0)
-    
-    S.label.image = img2
+    def perform_cropping(boxes):
+        # Save cropped words based on current boxes selection
+        if hasattr(S, 'show_progress'):
+            S.show_progress(85, "Cropping words...")
+        files = glob.glob(S.directoryout + '/*')
+        for f in files:
+            os.remove(f)
+        for ii in boxes:
+            box = (ii[0], ii[1], ii[2], ii[3])
+            crop = immg.crop(box)
+            S.nbr = S.nbr + 1
+            crop.save(S.directoryout + '/%s.png' % (S.nbr - 1), 'png')
+        if hasattr(S, 'show_progress'):
+            S.show_progress(90, f"Cropped {len(boxes)} words")
+
+    # Render detection result in the main word-detection panel if available
+    if hasattr(S, 'word_detect_canvas') and S.word_detect_canvas:
+        canvas = S.word_detect_canvas
+        canvas.delete('all')
+        display = PIL_image.resize((800, 600))
+        photo = ImageTk.PhotoImage(display)
+        canvas.photo = photo
+        canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+        S.word_detect_photo = photo
+
+    # Expose data and crop helper for the main UI buttons
+    S.word_detect_boxes = S.finalrowsbbx[:]
+    S.word_detect_image = PIL_image
+    S.perform_cropping_current_detection = lambda: perform_cropping(S.word_detect_boxes)
 
     files = glob.glob(S.directorytmp + '/*')
     for f in files:

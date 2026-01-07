@@ -83,3 +83,12 @@ def init_pathandfolders():
         S.btn_next["state"] = "normal" if len(S.list_of_files) > 1 else "disabled"
     if hasattr(S, 'btn_line_detect') and S.btn_line_detect:
         S.btn_line_detect["state"] = "normal"
+
+    # Reset segmentation mode for a new folder so the user can choose again
+    S.segmentation_mode = None
+    S.auto_detect_on_navigation = False
+    if hasattr(S, 'segmentation_mode_var') and S.segmentation_mode_var:
+        try:
+            S.segmentation_mode_var.set("Segmentation mode: not chosen")
+        except Exception:
+            pass

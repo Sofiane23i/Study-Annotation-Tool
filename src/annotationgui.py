@@ -52,6 +52,8 @@ else:
 
 pos = 0 #order listfile
 S.pos = pos
+S.segmentation_mode = None
+S.auto_detect_on_navigation = False
     
 #pathDirectory = '../data/testpng/'
 
@@ -92,31 +94,36 @@ window = tk.Tk()
 window.title("Study Annotation Tool - Handwriting Analysis")
 window.rowconfigure(0, minsize=800, weight=1)
 window.columnconfigure(1, minsize=800, weight=1)
-window.configure(bg='#2c3e50')
+window.configure(bg='#f7f9fc')
+# Open in full-screen (maximized) for better workspace
+try:
+    window.state('zoomed')
+except Exception:
+    pass
 
-# Define colors for modern look
+# Define a simple two-tone palette (light base + blue accent)
 COLORS = {
-    'bg_dark': '#2c3e50',
-    'bg_panel': '#34495e',
-    'bg_section': '#3d566e',
-    'accent': '#3498db',
-    'accent_hover': '#2980b9',
-    'success': '#27ae60',
-    'warning': '#f39c12',
-    'danger': '#e74c3c',
-    'text_light': '#ecf0f1',
-    'text_muted': '#95a5a6',
-    'border': '#4a6785'
+    'bg_dark': '#f7f9fc',       # main background
+    'bg_panel': '#ffffff',      # panels/cards
+    'bg_section': '#ffffff',    # sections inside panels
+    'accent': '#1f7ae0',        # primary accent
+    'accent_hover': '#1666b8',
+    'success': '#1f7ae0',       # reuse accent to stay within two colors
+    'warning': '#1f7ae0',       # aligned to two-color theme
+    'danger': '#1f7ae0',        # aligned to two-color theme
+    'text_light': '#1a1f2b',
+    'text_muted': '#5c6570',
+    'border': '#d9e2ec'
 }
 
 # Custom button style function
 def create_styled_button(parent, text, command=None, style='normal', width=18):
     colors = {
-        'normal': ('#3498db', '#2980b9', 'white'),
-        'success': ('#27ae60', '#219a52', 'white'),
-        'warning': ('#f39c12', '#d68910', 'white'),
-        'danger': ('#e74c3c', '#c0392b', 'white'),
-        'secondary': ('#7f8c8d', '#6c7a7b', 'white')
+        'normal': (COLORS['accent'], COLORS['accent_hover'], 'white'),
+        'success': (COLORS['accent'], COLORS['accent_hover'], 'white'),
+        'warning': (COLORS['accent'], COLORS['accent_hover'], 'white'),
+        'danger': (COLORS['accent'], COLORS['accent_hover'], 'white'),
+        'secondary': ('#e9edf5', '#d9e2ec', COLORS['text_light'])
     }
     bg, hover, fg = colors.get(style, colors['normal'])
     
@@ -161,10 +168,17 @@ section1.pack(fill=tk.X, pady=(0, 10))
 
 # Mode toggle variable
 input_mode_var = tk.StringVar(value="load")  # "load" or "generate"
+segmentation_mode_var = tk.StringVar(value="Segmentation mode: not chosen")
 
 # Toggle button frame
 toggle_frame = tk.Frame(section1, bg=COLORS['bg_section'])
-toggle_frame.pack(fill=tk.X, pady=3)
+toggle_frame.pack(fill=tk.X, pady=6, padx=4)
+
+mode_status = tk.Label(section1, textvariable=segmentation_mode_var,
+                       font=('Segoe UI', 9), anchor='w', justify='left',
+                       bg=COLORS['bg_section'], fg=COLORS['text_muted'])
+mode_status.pack(fill=tk.X, pady=(4, 0))
+S.segmentation_mode_var = segmentation_mode_var
 
 def widget_exists(widget):
     """Check if a tkinter widget still exists."""
@@ -173,16 +187,67 @@ def widget_exists(widget):
     except:
         return False
 
+# Segmentation mode helpers
+def set_segmentation_mode(mode):
+    """Lock segmentation mode after first choice (line or word)."""
+    if not hasattr(S, 'segmentation_mode') or S.segmentation_mode is None:
+        S.segmentation_mode = mode
+        if mode == 'line':
+            if widget_exists(btn_save):
+                btn_save.config(state='disabled')
+            if widget_exists(btn_line_detect):
+                btn_line_detect.config(state='normal')
+            if widget_exists(btn_annotate):
+                btn_annotate.config(state='disabled')
+            if widget_exists(btn_line_annotate):
+                btn_line_annotate.config(state='normal')
+        elif mode == 'word':
+            if widget_exists(btn_line_detect):
+                btn_line_detect.config(state='disabled')
+            if widget_exists(btn_save):
+                btn_save.config(state='normal')
+            if widget_exists(btn_line_annotate):
+                btn_line_annotate.config(state='disabled')
+            if widget_exists(btn_annotate):
+                btn_annotate.config(state='normal')
+        segmentation_mode_var.set(f"Segmentation mode: {mode.title()} (locked for remaining images)")
+        S.auto_detect_on_navigation = True
+    elif S.segmentation_mode != mode:
+        from tkinter import messagebox
+        messagebox.showinfo("Segmentation Mode Locked",
+                            f"You chose {S.segmentation_mode} segmentation for the first image."
+                            " The same mode will be used for all images.")
+        return False
+    return True
+
 def switch_to_load_mode():
     input_mode_var.set("load")
     btn_mode_load.config(bg=COLORS['accent'], fg='white', relief=tk.SUNKEN)
     btn_mode_generate.config(bg=COLORS['bg_section'], fg=COLORS['text_light'], relief=tk.RAISED)
     # Show load interface, hide generate interface
     try:
+        if widget_exists(S.word_detect_container):
+            S.word_detect_container.pack_forget()
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack_forget()
         if widget_exists(S.load_image_container):
             S.load_image_container.pack(expand=True, fill=tk.BOTH)
+        # Reset preview to load-mode placeholder, then show current load image if available
+        if hasattr(S, 'show_preview_placeholder'):
+            S.show_preview_placeholder(DEFAULT_PREVIEW_TEXT)
+        # Reset segmentation choice when returning to load mode
+        S.segmentation_mode = None
+        S.auto_detect_on_navigation = False
+        segmentation_mode_var.set("Segmentation mode: not chosen")
+        if hasattr(S, 'list_of_files') and S.list_of_files:
+            if S.pos < 0 or S.pos >= len(S.list_of_files):
+                S.pos = 0
+            if hasattr(S, 'update_preview_image'):
+                S.update_preview_image(S.list_of_files[S.pos])
+            if hasattr(S, 'image_info_var'):
+                S.image_info_var.set(f"Image {S.pos + 1} of {len(S.list_of_files)}")
+        elif hasattr(S, 'image_info_var'):
+            S.image_info_var.set("No images loaded")
     except Exception as e:
         print(f"Error in switch_to_load_mode: {e}")
 
@@ -196,6 +261,14 @@ def switch_to_generate_mode():
             S.load_image_container.pack_forget()
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+        # Clear preview so load-mode image does not linger
+        if hasattr(S, 'show_preview_placeholder'):
+            S.show_preview_placeholder(GENERATE_PREVIEW_TEXT)
+        if hasattr(S, 'image_info_var'):
+            S.image_info_var.set("Generate mode: waiting for output")
+        S.segmentation_mode = None
+        S.auto_detect_on_navigation = False
+        segmentation_mode_var.set("Segmentation mode: not chosen")
         # Build the HTR interface inside the container
         generate_htr()
     except Exception as e:
@@ -205,14 +278,14 @@ btn_mode_load = tk.Button(toggle_frame, text="📁 Load Image",
                           command=switch_to_load_mode,
                           bg=COLORS['accent'], fg='white',
                           font=('Segoe UI', 9, 'bold'),
-                          relief=tk.SUNKEN, bd=1, padx=10, pady=5)
+                          relief=tk.SUNKEN, bd=1, padx=12, pady=7)
 btn_mode_load.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
 
 btn_mode_generate = tk.Button(toggle_frame, text="✍️ Generate HTR", 
                               command=switch_to_generate_mode,
                               bg=COLORS['bg_section'], fg=COLORS['text_light'],
                               font=('Segoe UI', 9, 'bold'),
-                              relief=tk.RAISED, bd=1, padx=10, pady=5)
+                              relief=tk.RAISED, bd=1, padx=12, pady=7)
 btn_mode_generate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
 # Store for backward compatibility
@@ -229,6 +302,10 @@ def detect_lines_with_autofill():
     """
     from tkinter import messagebox
     
+    # Lock segmentation mode to line on first use
+    if not set_segmentation_mode('line'):
+        return
+
     # Check if image is loaded
     image_path = None
     if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
@@ -278,6 +355,12 @@ def detect_lines_with_autofill():
         
         if hasattr(S, 'update_status') and S.update_status:
             S.update_status(f"Detected {len(lines)} lines")
+
+        # Enable line annotation, disable word annotation
+        if widget_exists(btn_line_annotate):
+            btn_line_annotate.config(state='normal')
+        if widget_exists(btn_annotate):
+            btn_annotate.config(state='disabled')
         
     except Exception as e:
         messagebox.showerror("Error", f"Line detection failed:\n{str(e)}")
@@ -293,8 +376,29 @@ section2.pack(fill=tk.X, pady=(0, 10))
 btn_line_detect = create_styled_button(section2, "📄 Detect Lines", detect_lines_with_autofill, 'warning')
 btn_line_detect.pack(fill=tk.X, pady=3)
 
-btn_save = create_styled_button(section2, "🎯 Detect Words", save_file, 'warning')
+def detect_words_with_mode_lock():
+    if not set_segmentation_mode('word'):
+        return
+    # Swap to word-detection view
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.word_detect_container):
+        S.word_detect_container.pack(expand=True, fill=tk.BOTH)
+    save_file()
+    if widget_exists(btn_annotate):
+        btn_annotate.config(state='normal')
+    if widget_exists(btn_line_annotate):
+        btn_line_annotate.config(state='disabled')
+
+btn_save = create_styled_button(section2, "🎯 Detect Words", detect_words_with_mode_lock, 'warning')
 btn_save.pack(fill=tk.X, pady=3)
+
+def detect_characters():
+    """Open character-level annotation/detection flow."""
+    character_annotate()
+
+btn_char_detect = create_styled_button(section2, "🔤 Detect Characters", detect_characters, 'secondary')
+btn_char_detect.pack(fill=tk.X, pady=3)
 
 # Detection parameters frame
 params_frame = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -340,18 +444,44 @@ def update_padding_label(val):
 
 padding_slider.config(command=update_padding_label)
 
+def auto_next_after_annotation():
+    """Move to next image and auto-run detection for the locked mode."""
+    try:
+        next_image()
+        if hasattr(S, 'auto_detect_on_navigation') and S.auto_detect_on_navigation:
+            if getattr(S, 'segmentation_mode', None) == 'word':
+                detect_words_with_mode_lock()
+            elif getattr(S, 'segmentation_mode', None) == 'line':
+                detect_lines_with_autofill()
+    except Exception:
+        pass
+
 # Section 3: Annotation (after detection)
 section3 = tk.LabelFrame(fr_buttons, text=" ✏️ Annotation ", font=('Segoe UI', 10, 'bold'),
                          bg=COLORS['bg_section'], fg=COLORS['text_light'], 
                          relief=tk.FLAT, bd=1, padx=10, pady=10)
 section3.pack(fill=tk.X, pady=(0, 10))
 
-btn_annotate = create_styled_button(section3, "📝 Word Annotation", annotate, 'success')
+def annotate_words_and_advance():
+    if not set_segmentation_mode('word'):
+        return
+    annotate()
+    auto_next_after_annotation()
+
+btn_annotate = create_styled_button(section3, "📝 Word Annotation", annotate_words_and_advance, 'success')
 btn_annotate.pack(fill=tk.X, pady=3)
+btn_annotate.config(state='disabled')
 
 from actions.line_annotate import line_annotate
-btn_line_annotate = create_styled_button(section3, "📄 Line Annotation", line_annotate, 'success')
+def annotate_lines_and_advance():
+    if not set_segmentation_mode('line'):
+        return
+    line_annotate()
+    auto_next_after_annotation()
+
+btn_line_annotate = create_styled_button(section3, "📄 Line Annotation", annotate_lines_and_advance, 'success')
 btn_line_annotate.pack(fill=tk.X, pady=3)
+btn_line_annotate.config(state='disabled')
 
 from actions.character_annotate import character_annotate
 btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", character_annotate, 'secondary')
@@ -455,6 +585,7 @@ S.btn_save = btn_save
 S.btn_annotate = btn_annotate
 S.btn_line_annotate = btn_line_annotate
 S.btn_char_annotate = btn_char_annotate
+S.btn_char_detect = btn_char_detect
 S.scale_slider = scale_slider
 S.padding_slider = padding_slider
 S.btn_line_detect = btn_line_detect
@@ -473,6 +604,48 @@ content_frame.pack(expand=True, fill=tk.BOTH)
 # ============================================
 load_image_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
 load_image_container.pack(expand=True, fill=tk.BOTH)
+
+# ============================================
+# CONTAINER 2: Word Detection Review (hidden until word detect)
+# ============================================
+word_detect_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
+word_detect_container.pack_forget()
+
+word_detect_header = tk.Label(word_detect_container, text=" 🧠 Word Detection Review ",
+                              font=('Segoe UI', 12, 'bold'),
+                              bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                              relief=tk.FLAT, bd=1, padx=10, pady=8)
+word_detect_header.pack(fill=tk.X, pady=(0, 10))
+
+word_canvas = tk.Canvas(word_detect_container, width=800, height=600,
+                        bg='#eef2f7', highlightthickness=1, highlightbackground=COLORS['border'])
+word_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+word_btn_frame = tk.Frame(word_detect_container, bg=COLORS['bg_dark'])
+word_btn_frame.pack(fill=tk.X, pady=(8, 0))
+
+def back_to_image_view():
+    if widget_exists(word_detect_container):
+        word_detect_container.pack_forget()
+    if widget_exists(load_image_container):
+        load_image_container.pack(expand=True, fill=tk.BOTH)
+
+def proceed_to_annotation_from_word_panel():
+    if hasattr(S, 'perform_cropping_current_detection'):
+        S.perform_cropping_current_detection()
+    annotate()
+
+btn_back_view = tk.Button(word_btn_frame, text="⬅ Back to image view", command=back_to_image_view,
+                          bg=COLORS['bg_section'], fg=COLORS['text_light'], padx=10, pady=6)
+btn_back_view.pack(side=tk.LEFT, padx=4)
+
+btn_proceed_annotation = tk.Button(word_btn_frame, text="Proceed to annotation", command=proceed_to_annotation_from_word_panel,
+                                   bg=COLORS['accent'], fg='white', padx=12, pady=6)
+btn_proceed_annotation.pack(side=tk.RIGHT, padx=4)
+
+# store in state for detection rendering
+S.word_detect_container = word_detect_container
+S.word_detect_canvas = word_canvas
 
 # Load Image Folder Section
 load_image_frame = tk.LabelFrame(load_image_container, text=" 📂 Load Image Folder ", 
@@ -574,15 +747,15 @@ S.input_text = ""
 preview_section = tk.LabelFrame(load_image_container, text=" 🖼️ Image Preview ", 
                                  font=('Segoe UI', 11, 'bold'),
                                  bg=COLORS['bg_section'], fg=COLORS['text_light'],
-                                 relief=tk.FLAT, bd=2, padx=10, pady=10)
-preview_section.pack(fill=tk.BOTH, expand=True)
+                                 relief=tk.FLAT, bd=2, padx=12, pady=12)
+preview_section.pack(fill=tk.BOTH, expand=True, pady=(4, 0), padx=2)
 
 # Store preview_section in state for the toggle functions
 S.preview_section = preview_section
 
 # Create canvas for image preview with scrollbars
 preview_canvas_frame = tk.Frame(preview_section, bg=COLORS['bg_section'])
-preview_canvas_frame.pack(fill=tk.BOTH, expand=True)
+preview_canvas_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 6))
 
 preview_v_scroll = tk.Scrollbar(preview_canvas_frame, orient=tk.VERTICAL)
 preview_v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -590,7 +763,7 @@ preview_v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 preview_h_scroll = tk.Scrollbar(preview_canvas_frame, orient=tk.HORIZONTAL)
 preview_h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
 
-preview_canvas = tk.Canvas(preview_canvas_frame, bg='#2c3e50', 
+preview_canvas = tk.Canvas(preview_canvas_frame, bg='#eef2f7', 
                            xscrollcommand=preview_h_scroll.set,
                            yscrollcommand=preview_v_scroll.set,
                            width=700, height=400)
@@ -600,11 +773,32 @@ preview_v_scroll.config(command=preview_canvas.yview)
 preview_h_scroll.config(command=preview_canvas.xview)
 
 # Initial placeholder text on canvas
-preview_canvas.create_text(350, 200, text="No image loaded\n\n1. Open Folder to load handwriting images\n   OR\n2. Generate HTR to create synthetic images\n\n3. Enter corresponding text in the input area above\n4. Click 'Detect Lines' or 'Detect Words'",
-                           fill='#7f8c8d', font=('Segoe UI', 12), justify=tk.CENTER)
+DEFAULT_PREVIEW_TEXT = "No image loaded\n\n1. Open Folder to load handwriting images\n   OR\n2. Generate HTR to create synthetic images\n\n3. Pick LINE or WORD detection for the first image\n   (the choice stays for all images)\n4. Annotate, then move to the next image"
+GENERATE_PREVIEW_TEXT = "Generate mode active\n\nUse the Generate HTR panel to create synthetic handwriting"
+
+def show_preview_placeholder(text):
+    """Clear the preview canvas and show a placeholder message."""
+    preview_canvas.delete('all')
+    preview_canvas.create_text(350, 200, text=text,
+                               fill='#7f8c8d', font=('Segoe UI', 12), justify=tk.CENTER)
+    S.current_preview_image = None
+    S.current_image_path = None
+
+show_preview_placeholder(DEFAULT_PREVIEW_TEXT)
 
 S.preview_canvas = preview_canvas
 S.current_preview_image = None
+S.show_preview_placeholder = show_preview_placeholder
+
+def auto_detect_for_current():
+    """Automatically run the locked segmentation mode on the current image."""
+    if not getattr(S, 'auto_detect_on_navigation', False):
+        return
+    mode = getattr(S, 'segmentation_mode', None)
+    if mode == 'word':
+        detect_words_with_mode_lock()
+    elif mode == 'line':
+        detect_lines_with_autofill()
 
 # Function to update preview image
 def update_preview_image(image_path=None, pil_image=None):
@@ -648,7 +842,7 @@ S.update_preview_image = update_preview_image
 
 # Navigation buttons for multiple images
 nav_frame = tk.Frame(preview_section, bg=COLORS['bg_section'])
-nav_frame.pack(fill=tk.X, pady=(5, 0))
+nav_frame.pack(fill=tk.X, pady=(8, 4), padx=2)
 
 def prev_image():
     if S.list_of_files and S.pos > 0:
@@ -663,12 +857,12 @@ def next_image():
         update_status(f"Image {S.pos + 1} of {len(S.list_of_files)}")
 
 btn_prev_img = tk.Button(nav_frame, text="◀ Previous", command=prev_image,
-                         bg=COLORS['accent'], fg='white', font=('Segoe UI', 9))
-btn_prev_img.pack(side=tk.LEFT, padx=2)
+                         bg=COLORS['accent'], fg='white', font=('Segoe UI', 9), width=10)
+btn_prev_img.pack(side=tk.LEFT, padx=3, pady=2)
 
 btn_next_img = tk.Button(nav_frame, text="Next ▶", command=next_image,
-                         bg=COLORS['accent'], fg='white', font=('Segoe UI', 9))
-btn_next_img.pack(side=tk.LEFT, padx=2)
+                         bg=COLORS['accent'], fg='white', font=('Segoe UI', 9), width=10)
+btn_next_img.pack(side=tk.LEFT, padx=3, pady=2)
 
 image_info_var = tk.StringVar(value="No images loaded")
 image_info_label = tk.Label(nav_frame, textvariable=image_info_var,

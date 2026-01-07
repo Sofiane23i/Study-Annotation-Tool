@@ -4,6 +4,8 @@ import state as S
 import sys
 import os
 import tempfile
+import shutil
+import datetime
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import io
 import xml.etree.ElementTree as ET
@@ -519,9 +521,8 @@ def generate_htr():
                 os.chdir(old_cwd)
             
             # Display the actual SVG handwriting in canvas
-                # Generate in batches of 7 lines and save per-batch SVG/JPG files
-                batch_dir = os.path.abspath(os.path.join(current_dir, '..', 'gan_output_data', 'batch'))
-                os.makedirs(batch_dir, exist_ok=True)
+                # Generate in batches of 7 lines into a temporary preview directory
+                preview_dir = tempfile.mkdtemp(prefix="htr_preview_")
                 batch_size = 7
                 batches = [lines[i:i+batch_size] for i in range(0, len(lines), batch_size)]
 
@@ -531,8 +532,8 @@ def generate_htr():
                     if not any(b_lines):
                         continue
 
-                    out_svg = os.path.join(batch_dir, f'batch_{bidx}.svg')
-                    out_jpg = os.path.join(batch_dir, f'batch_{bidx}.jpg')
+                    out_svg = os.path.join(preview_dir, f'batch_{bidx}.svg')
+                    out_jpg = os.path.join(preview_dir, f'batch_{bidx}.jpg')
                     biases_b = [0.75] * len(b_lines)
                     styles_b = ([styles[0]] * len(b_lines)) if styles else None
                     stroke_colors_b = ['black'] * len(b_lines)
@@ -558,7 +559,7 @@ def generate_htr():
 
                     generated_files.append((out_svg, out_jpg, b_lines))
 
-                # Show first generated batch in preview (if any)
+                # Store generated file list for save action and show first generated batch in preview (if any)
                 try:
                     if not generated_files:
                         raise Exception("No valid batches generated")
@@ -567,6 +568,7 @@ def generate_htr():
 
                     # Populate shared batch image list (prefer JPG when available)
                     S.gan_batch_images = [jp if os.path.exists(jp) else sv for sv, jp, _ in generated_files]
+                    S.gan_generated_files = generated_files
                     S.gan_batch_index = 0
                     # Show first batch using the shared helper
                     try:
@@ -593,9 +595,9 @@ def generate_htr():
                     info_text.config(state=tk.NORMAL)
                     info_text.delete(1.0, tk.END)
                     actual_style = styles[0] if styles else "No style"
-                    info_content = f"✅ Handwriting Generated (batch mode)\n\nBatches: {len(generated_files)}\nStyle: {actual_style}\nFiles saved to: {batch_dir}\n"
+                    info_content = f"✅ Handwriting Generated (preview)\n\nBatches: {len(generated_files)}\nStyle: {actual_style}\nNote: Click 'Save' in preview panel to store images to gan_output_data/batch\n"
                     for i, (sv, jp, bl) in enumerate(generated_files, 1):
-                        info_content += f"Batch {i}: {len(bl)} lines → {os.path.basename(jp) if os.path.exists(jp) else os.path.basename(sv)}\n"
+                        info_content += f"Batch {i}: {len(bl)} lines → {os.path.basename(jp) if os.path.exists(jp) else os.path.basename(sv)} (preview only)\n"
                     info_text.insert(tk.END, info_content)
                     info_text.config(state=tk.DISABLED)
 
@@ -616,7 +618,7 @@ def generate_htr():
                     if hasattr(S, 'btn_line_detect') and S.btn_line_detect:
                         S.btn_line_detect["state"] = "normal"
 
-                    messagebox.showinfo("Generate HTR", f"Handwriting generated and saved into: {batch_dir}\nBatches: {len(generated_files)}")
+                    messagebox.showinfo("Generate HTR", f"Handwriting generated for preview.\nUse the Save button in the preview panel to store files to gan_output_data/batch.")
 
                 except Exception as display_error:
                     preview.delete("all")
@@ -714,6 +716,7 @@ def generate_htr():
 
     # Persistent list of batch images and index (store in shared state)
     S.gan_batch_images = []
+    S.gan_generated_files = []  # list of (svg, jpg, lines) matching gan_batch_images order
     S.gan_batch_index = 0
 
     def show_batch_image(idx):
@@ -760,17 +763,56 @@ def generate_htr():
         if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
             show_batch_image(min(len(S.gan_batch_images) - 1, S.gan_batch_index + 1))
 
-    # Navigation buttons
+    # Navigation + save buttons
     nav_frame = tk.Frame(form)
     nav_frame.grid(row=6, column=4, sticky="nw", padx=(10,0))
     prev_btn = tk.Button(nav_frame, text="Previous", command=prev_batch)
     prev_btn.pack(side=tk.TOP, pady=(0,5))
     next_btn = tk.Button(nav_frame, text="Next", command=next_batch)
-    next_btn.pack(side=tk.TOP)
+    next_btn.pack(side=tk.TOP, pady=(0,5))
+
+    def save_current_preview():
+        """Save the currently previewed generated image to gan_output_data/batch on demand."""
+        if not (hasattr(S, 'gan_batch_images') and S.gan_batch_images):
+            messagebox.showinfo("Save", "No generated image to save. Generate first.")
+            return
+        idx = max(0, min(S.gan_batch_index, len(S.gan_batch_images) - 1))
+        src_img = S.gan_batch_images[idx]
+        # Find matching svg if we have generated_files tracked
+        src_svg = None
+        if hasattr(S, 'gan_generated_files') and S.gan_generated_files and idx < len(S.gan_generated_files):
+            src_svg = S.gan_generated_files[idx][0]
+
+        dest_dir = batch_dir
+        os.makedirs(dest_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_name = f"batch_saved_{idx+1}_{timestamp}"
+        saved_files = []
+        try:
+            if src_img and os.path.exists(src_img):
+                dest_img = os.path.join(dest_dir, base_name + os.path.splitext(src_img)[1])
+                shutil.copy2(src_img, dest_img)
+                saved_files.append(os.path.basename(dest_img))
+            if src_svg and os.path.exists(src_svg):
+                dest_svg = os.path.join(dest_dir, base_name + ".svg")
+                shutil.copy2(src_svg, dest_svg)
+                saved_files.append(os.path.basename(dest_svg))
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to save image: {e}")
+            return
+
+        if saved_files:
+            messagebox.showinfo("Saved", "Saved files:\n" + "\n".join(saved_files))
+        else:
+            messagebox.showinfo("Save", "Nothing was saved (files missing).")
+
+    save_btn = tk.Button(nav_frame, text="Save", command=save_current_preview)
+    save_btn.pack(side=tk.TOP)
 
     # If there are saved JPGs on disk, populate and show first
     if jpg_files:
         S.gan_batch_images = jpg_files
+        S.gan_generated_files = [(None, jp, None) for jp in jpg_files]
         show_batch_image(0)
     else:
         preview.create_text(300, 150, text="Preview Area", fill="#999")
