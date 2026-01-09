@@ -680,3 +680,203 @@ def line_annotate():
     
     # Store reference in state
     S.line_annotate_window = window
+
+
+def start_embedded_line_annotation(image_path, detected_lines, text_lines=None):
+    """
+    Start line-by-line annotation embedded in the main annotation panel.
+    
+    Args:
+        image_path: Path to the image file
+        detected_lines: List of (y_start, y_end) tuples for each detected line
+        text_lines: Optional list of text strings to pre-fill each line
+    """
+    import tkinter as tk
+    from tkinter import messagebox, filedialog
+    from PIL import Image, ImageTk
+    
+    if not image_path or not os.path.exists(image_path):
+        messagebox.showerror("Error", "Image not found for annotation.")
+        return
+    
+    if not detected_lines:
+        messagebox.showinfo("No Lines", "No lines detected to annotate.")
+        return
+    
+    # Load the image
+    try:
+        original_img = Image.open(image_path)
+        img_width, img_height = original_img.size
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load image: {e}")
+        return
+    
+    # Get annotation container body
+    if not hasattr(S, 'annotation_body') or not S.annotation_body:
+        messagebox.showerror("Error", "Annotation panel not available.")
+        return
+    
+    # Clear the annotation body
+    for widget in S.annotation_body.winfo_children():
+        widget.destroy()
+    
+    # Store annotation data
+    line_entries = []
+    line_images = []  # Keep references to prevent garbage collection
+    current_line_idx = [0]  # Use list to allow modification in nested functions
+    
+    # Create scrollable frame for line annotations
+    canvas = tk.Canvas(S.annotation_body, bg='#f4f7fb', highlightthickness=0)
+    scrollbar = tk.Scrollbar(S.annotation_body, orient="vertical", command=canvas.yview)
+    scroll_frame = tk.Frame(canvas, bg='#f4f7fb')
+    
+    scroll_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    
+    # Enable mouse wheel scrolling
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
+    # Header
+    header = tk.Frame(scroll_frame, bg='#6cb6ff', padx=10, pady=8)
+    header.pack(fill=tk.X, pady=(0, 10))
+    tk.Label(header, text=f"📄 Line Annotation - {len(detected_lines)} lines detected",
+             font=('Segoe UI', 12, 'bold'), bg='#6cb6ff', fg='white').pack(side=tk.LEFT)
+    
+    # Create annotation entry for each line
+    for i, (y_start, y_end) in enumerate(detected_lines):
+        line_frame = tk.Frame(scroll_frame, bg='white', relief=tk.RIDGE, bd=1)
+        line_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Line number label
+        tk.Label(line_frame, text=f"Line {i + 1}:", font=('Segoe UI', 10, 'bold'),
+                 bg='white', fg='#333').pack(anchor='w', padx=10, pady=(8, 2))
+        
+        # Crop the line from image
+        line_crop = original_img.crop((0, y_start, img_width, y_end))
+        
+        # Resize for display (max width 600px, preserve aspect ratio)
+        crop_w, crop_h = line_crop.size
+        max_width = 600
+        if crop_w > max_width:
+            scale = max_width / crop_w
+            new_w = max_width
+            new_h = int(crop_h * scale)
+            line_crop = line_crop.resize((new_w, new_h), Image.LANCZOS)
+        
+        # Create PhotoImage and display
+        photo = ImageTk.PhotoImage(line_crop)
+        line_images.append(photo)  # Keep reference
+        
+        img_label = tk.Label(line_frame, image=photo, bg='white', relief=tk.SUNKEN, bd=1)
+        img_label.pack(padx=10, pady=5)
+        
+        # Text entry for transcription
+        tk.Label(line_frame, text="Transcription:", font=('Segoe UI', 9),
+                 bg='white', fg='#666').pack(anchor='w', padx=10, pady=(5, 2))
+        
+        entry = tk.Entry(line_frame, font=('Segoe UI', 11), width=70)
+        entry.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        # Pre-fill if text is provided
+        if text_lines and i < len(text_lines):
+            entry.insert(0, text_lines[i])
+        
+        line_entries.append({
+            'entry': entry,
+            'y_start': y_start,
+            'y_end': y_end,
+            'frame': line_frame
+        })
+    
+    # Action buttons frame
+    btn_frame = tk.Frame(scroll_frame, bg='#f4f7fb')
+    btn_frame.pack(fill=tk.X, padx=10, pady=(15, 20))
+    
+    def save_annotations():
+        """Save line annotations to JSON file."""
+        annotations = []
+        for i, line_data in enumerate(line_entries):
+            text = line_data['entry'].get().strip()
+            annotations.append({
+                'line_id': i,
+                'y_start': line_data['y_start'],
+                'y_end': line_data['y_end'],
+                'text': text,
+                'bbox': [0, line_data['y_start'], img_width, line_data['y_end'] - line_data['y_start']]
+            })
+        
+        save_path = filedialog.asksaveasfilename(
+            defaultextension='.json',
+            filetypes=[('JSON files', '*.json'), ('All files', '*.*')],
+            title="Save Line Annotations"
+        )
+        
+        if save_path:
+            try:
+                import json
+                data = {
+                    'image': os.path.basename(image_path),
+                    'image_size': [img_width, img_height],
+                    'lines': annotations
+                }
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                messagebox.showinfo("Saved", f"Annotations saved to:\n{save_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save: {e}")
+    
+    def export_iam_format():
+        """Export in IAM-like format (image_id text)."""
+        save_path = filedialog.asksaveasfilename(
+            defaultextension='.txt',
+            filetypes=[('Text files', '*.txt'), ('All files', '*.*')],
+            title="Export IAM Format"
+        )
+        
+        if save_path:
+            try:
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                lines_out = []
+                for i, line_data in enumerate(line_entries):
+                    text = line_data['entry'].get().strip()
+                    if text:
+                        lines_out.append(f"{base_name}-line{i:03d} {text}")
+                
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(lines_out))
+                messagebox.showinfo("Exported", f"IAM format exported to:\n{save_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export: {e}")
+    
+    def clear_all_entries():
+        """Clear all transcription entries."""
+        for line_data in line_entries:
+            line_data['entry'].delete(0, tk.END)
+    
+    # Buttons
+    tk.Button(btn_frame, text="💾 Save JSON", command=save_annotations,
+              bg='#6cb6ff', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=15, pady=5).pack(side=tk.LEFT, padx=5)
+    
+    tk.Button(btn_frame, text="📄 Export IAM", command=export_iam_format,
+              bg='#5a9fd4', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=15, pady=5).pack(side=tk.LEFT, padx=5)
+    
+    tk.Button(btn_frame, text="🗑 Clear All", command=clear_all_entries,
+              bg='#dc3545', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=15, pady=5).pack(side=tk.RIGHT, padx=5)
+    
+    # Store references in state to prevent garbage collection
+    S.line_annotation_images = line_images
+    S.line_annotation_entries = line_entries
+    S.line_annotation_canvas = canvas

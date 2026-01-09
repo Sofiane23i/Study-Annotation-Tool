@@ -329,10 +329,39 @@ btn_htr = btn_mode_generate
 # ============================================
 # LINE DETECTION FUNCTION
 # ============================================
+def disable_other_detection_buttons(selected_mode):
+    """Disable detection buttons for modes other than the selected one."""
+    if selected_mode == 'line':
+        if widget_exists(btn_save):
+            btn_save.config(state='disabled')
+        if widget_exists(btn_annotate):
+            btn_annotate.config(state='disabled')
+        if widget_exists(btn_char_detect):
+            btn_char_detect.config(state='disabled')
+        if widget_exists(btn_char_annotate):
+            btn_char_annotate.config(state='disabled')
+    elif selected_mode == 'word':
+        if widget_exists(btn_line_detect):
+            btn_line_detect.config(state='disabled')
+        if widget_exists(btn_line_annotate):
+            btn_line_annotate.config(state='disabled')
+        if widget_exists(btn_char_detect):
+            btn_char_detect.config(state='disabled')
+        if widget_exists(btn_char_annotate):
+            btn_char_annotate.config(state='disabled')
+    elif selected_mode == 'character':
+        if widget_exists(btn_line_detect):
+            btn_line_detect.config(state='disabled')
+        if widget_exists(btn_line_annotate):
+            btn_line_annotate.config(state='disabled')
+        if widget_exists(btn_save):
+            btn_save.config(state='disabled')
+        if widget_exists(btn_annotate):
+            btn_annotate.config(state='disabled')
+
 def detect_lines_with_autofill():
     """
-    Detect text lines in the current image and open annotation window 
-    with auto-filled text from input area.
+    Detect text lines in the current image and display them in the right panel.
     """
     from tkinter import messagebox
 
@@ -342,6 +371,9 @@ def detect_lines_with_autofill():
     # Lock segmentation mode to line on first use
     if not set_segmentation_mode('line'):
         return
+    
+    # Disable other detection buttons
+    disable_other_detection_buttons('line')
 
     # Check if image is loaded
     image_path = None
@@ -382,18 +414,28 @@ def detect_lines_with_autofill():
             messagebox.showinfo("No Lines Detected", "No text lines detected in the image.\nTry adjusting the image or using manual annotation.")
             return
         
-        # Parse input text into lines for auto-fill
-        text_lines = input_text.splitlines() if input_text else []
+        # Store detected lines and image path for annotation
+        S.detected_lines = lines
+        S.line_image_path = image_path
+        S.line_input_text = input_text
         
-        # Open line annotation window with detected lines
-        from actions.line_annotate import LineAnnotationWindow
-        S.input_text = input_text  # Ensure it's in state for the annotation window
-        LineAnnotationWindow(image_path, detected_lines=lines, auto_text=text_lines)
+        # Switch to line detection view
+        if widget_exists(S.load_image_container):
+            S.load_image_container.pack_forget()
+        if widget_exists(S.word_detect_container):
+            S.word_detect_container.pack_forget()
+        if widget_exists(S.annotation_container):
+            S.annotation_container.pack_forget()
+        if widget_exists(S.line_detect_container):
+            S.line_detect_container.pack(expand=True, fill=tk.BOTH)
+        
+        # Draw lines on canvas
+        display_detected_lines(img, lines)
         
         if hasattr(S, 'update_status') and S.update_status:
             S.update_status(f"Detected {len(lines)} lines")
 
-        # Enable line annotation, disable word annotation
+        # Enable line annotation button
         if widget_exists(btn_line_annotate):
             btn_line_annotate.config(state='normal')
         if widget_exists(btn_annotate):
@@ -404,20 +446,82 @@ def detect_lines_with_autofill():
         import traceback
         traceback.print_exc()
 
+def display_detected_lines(img, lines):
+    """Display image with detected lines on the line detection canvas."""
+    if not hasattr(S, 'line_detect_canvas'):
+        return
+    
+    canvas = S.line_detect_canvas
+    canvas.delete('all')
+    
+    # Draw image with line boxes
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_with_lines = img_rgb.copy()
+    
+    # Draw rectangles around detected lines
+    for i, (y_start, y_end) in enumerate(lines):
+        cv2.rectangle(img_with_lines, (0, y_start), (img.shape[1], y_end), (30, 144, 255), 2)
+        cv2.putText(img_with_lines, f"Line {i+1}", (5, y_start + 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (30, 144, 255), 2)
+    
+    # Resize for display
+    h, w = img_with_lines.shape[:2]
+    canvas_w, canvas_h = 800, 600
+    scale = min(canvas_w / w, canvas_h / h, 1.0)
+    new_w, new_h = int(w * scale), int(h * scale)
+    
+    img_resized = cv2.resize(img_with_lines, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    pil_img = Image.fromarray(img_resized)
+    S.line_detect_photo = ImageTk.PhotoImage(pil_img)
+    
+    # Center on canvas
+    x_offset = (canvas_w - new_w) // 2
+    y_offset = (canvas_h - new_h) // 2
+    canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=S.line_detect_photo)
+    
+    # Update info label
+    if hasattr(S, 'line_info_label'):
+        S.line_info_label.config(text=f"Detected {len(lines)} lines - Click 'Proceed to Annotation' to annotate each line")
+
 # Section 2: Detection
 section2 = tk.LabelFrame(fr_buttons, text=" 🔍 Detection ", font=('Segoe UI', 10, 'bold'),
                          bg=COLORS['bg_section'], fg=COLORS['text_light'], 
                          relief=tk.FLAT, bd=1, padx=10, pady=10)
 section2.pack(fill=tk.X, pady=(0, 10))
 
-btn_line_detect = create_styled_button(section2, "📄 Detect Lines", detect_lines_with_autofill, 'warning')
-btn_line_detect.pack(fill=tk.X, pady=3)
+# Line detection row
+line_row = tk.Frame(section2, bg=COLORS['bg_section'])
+line_row.pack(fill=tk.X, pady=3)
+btn_line_detect = create_styled_button(line_row, "📄 Detect Lines", detect_lines_with_autofill, 'warning', width=9)
+btn_line_detect.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+from actions.line_annotate import line_annotate
+def annotate_lines_and_advance():
+    if not ensure_images_available():
+        return
+    if not set_segmentation_mode('line'):
+        return
+    if widget_exists(S.word_detect_container):
+        S.word_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    line_annotate()
+
+btn_line_annotate = create_styled_button(line_row, "📄 Annotate", annotate_lines_and_advance, 'success', width=9)
+btn_line_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+btn_line_annotate.config(state='disabled')
 
 def detect_words_with_mode_lock():
     if not set_segmentation_mode('word'):
         return
     if not ensure_images_available():
         return
+    
+    # Disable other detection buttons
+    disable_other_detection_buttons('word')
+    
     # Require either loaded images or generated GAN previews before showing detection
     has_loaded_images = hasattr(S, 'list_of_files') and S.list_of_files
     has_gan_images = getattr(S, 'gan_generated_ready', False) and getattr(S, 'gan_batch_images', [])
@@ -438,17 +542,53 @@ def detect_words_with_mode_lock():
     if widget_exists(btn_line_annotate):
         btn_line_annotate.config(state='disabled')
 
-btn_save = create_styled_button(section2, "🎯 Detect Words", detect_words_with_mode_lock, 'warning')
-btn_save.pack(fill=tk.X, pady=3)
+# Word detection row
+word_row = tk.Frame(section2, bg=COLORS['bg_section'])
+word_row.pack(fill=tk.X, pady=3)
+btn_save = create_styled_button(word_row, "🎯 Detect Words", detect_words_with_mode_lock, 'warning', width=9)
+btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+def annotate_words_and_advance():
+    if not ensure_images_available():
+        return
+    if not set_segmentation_mode('word'):
+        return
+    if widget_exists(S.word_detect_container):
+        S.word_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    annotate()
+
+btn_annotate = create_styled_button(word_row, "📝 Annotate", annotate_words_and_advance, 'success', width=9)
+btn_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+btn_annotate.config(state='disabled')
 
 def detect_characters():
     """Open character-level annotation/detection flow."""
     if not ensure_images_available():
         return
+    
+    # Disable other detection buttons
+    disable_other_detection_buttons('character')
+    
     character_annotate()
 
-btn_char_detect = create_styled_button(section2, "🔤 Detect Characters", detect_characters, 'secondary')
-btn_char_detect.pack(fill=tk.X, pady=3)
+# Character detection row
+char_row = tk.Frame(section2, bg=COLORS['bg_section'])
+char_row.pack(fill=tk.X, pady=3)
+btn_char_detect = create_styled_button(char_row, "🔤 Detect Chars", detect_characters, 'warning', width=9)
+btn_char_detect.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+from actions.character_annotate import character_annotate
+def annotate_characters_with_save():
+    if not ensure_images_available():
+        return
+    character_annotate()
+
+btn_char_annotate = create_styled_button(char_row, "🔤 Annotate", annotate_characters_with_save, 'success', width=9)
+btn_char_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
 # Detection parameters frame
 params_frame = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -531,60 +671,6 @@ def auto_next_after_annotation():
 
     # Ensure detection visibility tracked in shared state
     S.update_detection_visibility = update_detection_visibility
-
-# Section 3: Annotation (after detection)
-section3 = tk.LabelFrame(fr_buttons, text=" ✏️ Annotation ", font=('Segoe UI', 10, 'bold'),
-                         bg=COLORS['bg_section'], fg=COLORS['text_light'], 
-                         relief=tk.FLAT, bd=1, padx=10, pady=10)
-section3.pack(fill=tk.X, pady=(0, 10))
-
-def annotate_words_and_advance():
-    if not ensure_images_available():
-        return
-    if not set_segmentation_mode('word'):
-        return
-    if widget_exists(S.word_detect_container):
-        S.word_detect_container.pack_forget()
-    if widget_exists(S.load_image_container):
-        S.load_image_container.pack_forget()
-    if widget_exists(S.annotation_container):
-        S.annotation_container.pack(expand=True, fill=tk.BOTH)
-    annotate()
-    auto_next_after_annotation()
-
-btn_annotate = create_styled_button(section3, "📝 Word Annotation", annotate_words_and_advance, 'success')
-btn_annotate.pack(fill=tk.X, pady=3)
-btn_annotate.config(state='disabled')
-
-from actions.line_annotate import line_annotate
-def annotate_lines_and_advance():
-    if not ensure_images_available():
-        return
-    if not set_segmentation_mode('line'):
-        return
-    if widget_exists(S.word_detect_container):
-        S.word_detect_container.pack_forget()
-    if widget_exists(S.load_image_container):
-        S.load_image_container.pack_forget()
-    if widget_exists(S.annotation_container):
-        S.annotation_container.pack(expand=True, fill=tk.BOTH)
-    line_annotate()
-    auto_next_after_annotation()
-
-btn_line_annotate = create_styled_button(section3, "📄 Line Annotation", annotate_lines_and_advance, 'success')
-btn_line_annotate.pack(fill=tk.X, pady=3)
-btn_line_annotate.config(state='disabled')
-
-from actions.character_annotate import character_annotate
-
-def annotate_characters_with_save():
-    if not ensure_images_available():
-        return
-    save_generated_gan_images_if_needed()
-    character_annotate()
-
-btn_char_annotate = create_styled_button(section3, "🔤 Character Annotation", annotate_characters_with_save, 'secondary')
-btn_char_annotate.pack(fill=tk.X, pady=3)
 
 # Section 4: Settings
 section4 = tk.LabelFrame(fr_buttons, text=" ⚙️ Settings ", font=('Segoe UI', 10, 'bold'),
@@ -756,6 +842,63 @@ btn_proceed_annotation.pack(side=tk.RIGHT, padx=4)
 # store in state for detection rendering
 S.word_detect_container = word_detect_container
 S.word_detect_canvas = word_canvas
+
+# ============================================
+# CONTAINER 2b: Line Detection Review (hidden until line detect)
+# ============================================
+line_detect_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
+line_detect_container.pack_forget()
+
+line_detect_header = tk.Label(line_detect_container, text=" 📄 Line Detection Review ",
+                              font=('Segoe UI', 12, 'bold'),
+                              bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                              relief=tk.FLAT, bd=1, padx=10, pady=8)
+line_detect_header.pack(fill=tk.X, pady=(0, 10))
+
+line_canvas = tk.Canvas(line_detect_container, width=800, height=600,
+                        bg='#eef2f7', highlightthickness=1, highlightbackground=COLORS['border'])
+line_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+line_info_label = tk.Label(line_detect_container, text="",
+                           font=('Segoe UI', 10), bg=COLORS['bg_dark'], fg=COLORS['text_light'])
+line_info_label.pack(fill=tk.X, pady=(4, 0))
+
+line_btn_frame = tk.Frame(line_detect_container, bg=COLORS['bg_dark'])
+line_btn_frame.pack(fill=tk.X, pady=(8, 0))
+
+def back_to_image_view_from_line():
+    if widget_exists(line_detect_container):
+        line_detect_container.pack_forget()
+    if widget_exists(load_image_container):
+        load_image_container.pack(expand=True, fill=tk.BOTH)
+
+def proceed_to_line_annotation():
+    """Start line-by-line annotation in the annotation panel."""
+    if widget_exists(S.line_detect_container):
+        S.line_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    
+    # Start line annotation with detected lines
+    from actions.line_annotate import start_embedded_line_annotation
+    if hasattr(S, 'detected_lines') and hasattr(S, 'line_image_path'):
+        text_lines = S.line_input_text.splitlines() if hasattr(S, 'line_input_text') and S.line_input_text else []
+        start_embedded_line_annotation(S.line_image_path, S.detected_lines, text_lines)
+
+btn_back_line_view = tk.Button(line_btn_frame, text="⬅ Back to image view", command=back_to_image_view_from_line,
+                          bg=COLORS['bg_section'], fg=COLORS['text_light'], padx=10, pady=6)
+btn_back_line_view.pack(side=tk.LEFT, padx=4)
+
+btn_proceed_line_annotation = tk.Button(line_btn_frame, text="Proceed to annotation", command=proceed_to_line_annotation,
+                                   bg=COLORS['accent'], fg='white', padx=12, pady=6)
+btn_proceed_line_annotation.pack(side=tk.RIGHT, padx=4)
+
+# store in state for line detection rendering
+S.line_detect_container = line_detect_container
+S.line_detect_canvas = line_canvas
+S.line_info_label = line_info_label
 
 # ============================================
 # CONTAINER 3: Annotation Interface (hidden until annotation)
