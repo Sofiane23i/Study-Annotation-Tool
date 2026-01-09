@@ -218,19 +218,11 @@ def set_segmentation_mode(mode):
                 btn_save.config(state='disabled')
             if widget_exists(btn_line_detect):
                 btn_line_detect.config(state='normal')
-            if widget_exists(btn_annotate):
-                btn_annotate.config(state='disabled')
-            if widget_exists(btn_line_annotate):
-                btn_line_annotate.config(state='normal')
         elif mode == 'word':
             if widget_exists(btn_line_detect):
                 btn_line_detect.config(state='disabled')
             if widget_exists(btn_save):
                 btn_save.config(state='normal')
-            if widget_exists(btn_line_annotate):
-                btn_line_annotate.config(state='disabled')
-            if widget_exists(btn_annotate):
-                btn_annotate.config(state='normal')
         segmentation_mode_var.set(f"Segmentation mode: {mode.title()} (locked for remaining images)")
         S.auto_detect_on_navigation = True
     elif S.segmentation_mode != mode:
@@ -334,30 +326,18 @@ def disable_other_detection_buttons(selected_mode):
     if selected_mode == 'line':
         if widget_exists(btn_save):
             btn_save.config(state='disabled')
-        if widget_exists(btn_annotate):
-            btn_annotate.config(state='disabled')
         if widget_exists(btn_char_detect):
             btn_char_detect.config(state='disabled')
-        if widget_exists(btn_char_annotate):
-            btn_char_annotate.config(state='disabled')
     elif selected_mode == 'word':
         if widget_exists(btn_line_detect):
             btn_line_detect.config(state='disabled')
-        if widget_exists(btn_line_annotate):
-            btn_line_annotate.config(state='disabled')
         if widget_exists(btn_char_detect):
             btn_char_detect.config(state='disabled')
-        if widget_exists(btn_char_annotate):
-            btn_char_annotate.config(state='disabled')
     elif selected_mode == 'character':
         if widget_exists(btn_line_detect):
             btn_line_detect.config(state='disabled')
-        if widget_exists(btn_line_annotate):
-            btn_line_annotate.config(state='disabled')
         if widget_exists(btn_save):
             btn_save.config(state='disabled')
-        if widget_exists(btn_annotate):
-            btn_annotate.config(state='disabled')
 
 def detect_lines_with_autofill():
     """
@@ -434,12 +414,6 @@ def detect_lines_with_autofill():
         
         if hasattr(S, 'update_status') and S.update_status:
             S.update_status(f"Detected {len(lines)} lines")
-
-        # Enable line annotation button
-        if widget_exists(btn_line_annotate):
-            btn_line_annotate.config(state='normal')
-        if widget_exists(btn_annotate):
-            btn_annotate.config(state='disabled')
         
     except Exception as e:
         messagebox.showerror("Error", f"Line detection failed:\n{str(e)}")
@@ -492,26 +466,8 @@ section2.pack(fill=tk.X, pady=(0, 10))
 # Line detection row
 line_row = tk.Frame(section2, bg=COLORS['bg_section'])
 line_row.pack(fill=tk.X, pady=3)
-btn_line_detect = create_styled_button(line_row, "📄 Detect Lines", detect_lines_with_autofill, 'warning', width=9)
-btn_line_detect.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-
-from actions.line_annotate import line_annotate
-def annotate_lines_and_advance():
-    if not ensure_images_available():
-        return
-    if not set_segmentation_mode('line'):
-        return
-    if widget_exists(S.word_detect_container):
-        S.word_detect_container.pack_forget()
-    if widget_exists(S.load_image_container):
-        S.load_image_container.pack_forget()
-    if widget_exists(S.annotation_container):
-        S.annotation_container.pack(expand=True, fill=tk.BOTH)
-    line_annotate()
-
-btn_line_annotate = create_styled_button(line_row, "📄 Annotate", annotate_lines_and_advance, 'success', width=9)
-btn_line_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-btn_line_annotate.config(state='disabled')
+btn_line_detect = create_styled_button(line_row, "📄 Detect Lines", detect_lines_with_autofill, 'warning', width=18)
+btn_line_detect.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 def detect_words_with_mode_lock():
     if not set_segmentation_mode('word'):
@@ -537,33 +493,12 @@ def detect_words_with_mode_lock():
     if widget_exists(S.word_detect_container):
         S.word_detect_container.pack(expand=True, fill=tk.BOTH)
     save_file()
-    if widget_exists(btn_annotate):
-        btn_annotate.config(state='normal')
-    if widget_exists(btn_line_annotate):
-        btn_line_annotate.config(state='disabled')
 
 # Word detection row
 word_row = tk.Frame(section2, bg=COLORS['bg_section'])
 word_row.pack(fill=tk.X, pady=3)
-btn_save = create_styled_button(word_row, "🎯 Detect Words", detect_words_with_mode_lock, 'warning', width=9)
-btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-
-def annotate_words_and_advance():
-    if not ensure_images_available():
-        return
-    if not set_segmentation_mode('word'):
-        return
-    if widget_exists(S.word_detect_container):
-        S.word_detect_container.pack_forget()
-    if widget_exists(S.load_image_container):
-        S.load_image_container.pack_forget()
-    if widget_exists(S.annotation_container):
-        S.annotation_container.pack(expand=True, fill=tk.BOTH)
-    annotate()
-
-btn_annotate = create_styled_button(word_row, "📝 Annotate", annotate_words_and_advance, 'success', width=9)
-btn_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-btn_annotate.config(state='disabled')
+btn_save = create_styled_button(word_row, "🎯 Detect Words", detect_words_with_mode_lock, 'warning', width=18)
+btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 def detect_characters():
     """Detect characters using saved templates and display in right panel."""
@@ -663,10 +598,6 @@ def detect_characters():
         
         if hasattr(S, 'update_status') and S.update_status:
             S.update_status(f"Character detection: {len(detected_chars)} found")
-        
-        # Enable annotation button
-        if widget_exists(btn_char_annotate):
-            btn_char_annotate.config(state='normal')
             
     except Exception as e:
         messagebox.showerror("Error", f"Character detection failed:\n{str(e)}")
@@ -716,17 +647,8 @@ def display_detected_characters(img, detected_chars):
 # Character detection row
 char_row = tk.Frame(section2, bg=COLORS['bg_section'])
 char_row.pack(fill=tk.X, pady=3)
-btn_char_detect = create_styled_button(char_row, "🔤 Detect Chars", detect_characters, 'warning', width=9)
-btn_char_detect.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-
-from actions.character_annotate import character_annotate
-def annotate_characters_with_save():
-    if not ensure_images_available():
-        return
-    character_annotate()
-
-btn_char_annotate = create_styled_button(char_row, "🔤 Annotate", annotate_characters_with_save, 'success', width=9)
-btn_char_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+btn_char_detect = create_styled_button(char_row, "🔤 Detect Chars", detect_characters, 'warning', width=18)
+btn_char_detect.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 # Detection parameters frame
 params_frame = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -883,11 +805,9 @@ fr_buttons.grid(row=0, column=0, sticky="nsew")
 txt_edit.grid(row=0, column=1, sticky="nsew")
 
 # Initial button states - disable detection buttons until image is loaded
-btn_annotate["state"] = "disabled"
 btn_save["state"] = "disabled"
 btn_line_detect["state"] = "disabled"
 btn_char_detect["state"] = "disabled"
-btn_char_annotate["state"] = "normal"
 scale_slider["state"] = "disabled"
 padding_slider["state"] = "disabled"
 
@@ -906,9 +826,6 @@ S.btn_htr = btn_htr
 S.btn_next = None
 S.btn_prev = None
 S.btn_save = btn_save
-S.btn_annotate = btn_annotate
-S.btn_line_annotate = btn_line_annotate
-S.btn_char_annotate = btn_char_annotate
 S.btn_char_detect = btn_char_detect
 S.scale_slider = scale_slider
 S.padding_slider = padding_slider
@@ -1511,7 +1428,7 @@ def setup_keyboard_shortcuts():
     
     def on_ctrl_a(event):
         """Ctrl+A: Word annotation"""
-        if S.shortcuts_enabled and btn_annotate['state'] != 'disabled':
+        if S.shortcuts_enabled:
             annotate()
             return 'break'
     
@@ -1525,6 +1442,7 @@ def setup_keyboard_shortcuts():
     def on_ctrl_k(event):
         """Ctrl+K: Character annotation"""
         if S.shortcuts_enabled:
+            from actions.character_annotate import character_annotate
             character_annotate()
             return 'break'
     
