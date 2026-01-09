@@ -1,9 +1,299 @@
 import os
 import tkinter as tk
-from tkinter import simpledialog, messagebox
+from tkinter import simpledialog, messagebox, filedialog
 from PIL import Image, ImageTk
 import json
+import cv2
+import numpy as np
 import state as S
+
+
+def start_embedded_character_annotation(image_path, detected_chars, templates=None):
+    """
+    Start character annotation embedded in the main annotation panel.
+    
+    Args:
+        image_path: Path to the image file
+        detected_chars: List of {'coords': (x1,y1,x2,y2), 'label': str, 'score': float}
+        templates: List of saved templates (optional)
+    """
+    if not image_path or not os.path.exists(image_path):
+        messagebox.showerror("Error", "Image not found for annotation.")
+        return
+    
+    # Load the image
+    try:
+        original_img = Image.open(image_path)
+        img_width, img_height = original_img.size
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load image: {e}")
+        return
+    
+    # Get annotation container body
+    if not hasattr(S, 'annotation_body') or not S.annotation_body:
+        messagebox.showerror("Error", "Annotation panel not available.")
+        return
+    
+    # Clear the annotation body
+    for widget in S.annotation_body.winfo_children():
+        widget.destroy()
+    
+    # Store annotation data
+    char_entries = []
+    char_images = []  # Keep references to prevent garbage collection
+    boxes = list(detected_chars) if detected_chars else []
+    
+    # Create scrollable frame
+    canvas = tk.Canvas(S.annotation_body, bg='#f4f7fb', highlightthickness=0)
+    scrollbar = tk.Scrollbar(S.annotation_body, orient="vertical", command=canvas.yview)
+    scroll_frame = tk.Frame(canvas, bg='#f4f7fb')
+    
+    scroll_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    
+    # Enable mouse wheel scrolling
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
+    # Header
+    header = tk.Frame(scroll_frame, bg='#6cb6ff', padx=10, pady=8)
+    header.pack(fill=tk.X, pady=(0, 10))
+    header_text = f"🔤 Character Annotation - {len(boxes)} characters detected"
+    tk.Label(header, text=header_text,
+             font=('Segoe UI', 12, 'bold'), bg='#6cb6ff', fg='white').pack(side=tk.LEFT)
+    
+    # Stats frame
+    stats_frame = tk.Frame(scroll_frame, bg='#e8f4ff', padx=10, pady=5)
+    stats_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+    
+    # Count unique labels
+    label_counts = {}
+    for char in boxes:
+        lbl = char.get('label', '?')
+        label_counts[lbl] = label_counts.get(lbl, 0) + 1
+    
+    stats_text = f"Unique characters: {len(label_counts)} | " + ", ".join([f"'{k}': {v}" for k, v in sorted(label_counts.items())[:10]])
+    if len(label_counts) > 10:
+        stats_text += f" ... and {len(label_counts) - 10} more"
+    
+    tk.Label(stats_frame, text=stats_text, font=('Segoe UI', 9), bg='#e8f4ff', fg='#333').pack(anchor='w')
+    
+    # List frame for character entries
+    list_container = tk.Frame(scroll_frame, bg='#f4f7fb')
+    list_container.pack(fill=tk.BOTH, expand=True, padx=10)
+    
+    def refresh_char_list():
+        """Refresh the character list display."""
+        # Clear existing entries
+        for widget in list_container.winfo_children():
+            widget.destroy()
+        char_entries.clear()
+        char_images.clear()
+        
+        # Group characters by label for organized display
+        for i, char_info in enumerate(boxes):
+            x1, y1, x2, y2 = char_info['coords']
+            label = char_info.get('label', '?')
+            score = char_info.get('score', 0)
+            
+            char_frame = tk.Frame(list_container, bg='white', relief=tk.RIDGE, bd=1)
+            char_frame.pack(fill=tk.X, pady=3)
+            
+            # Crop character from image
+            try:
+                char_crop = original_img.crop((x1, y1, x2, y2))
+                # Resize to fixed height while maintaining aspect ratio
+                crop_w, crop_h = char_crop.size
+                target_h = 50
+                if crop_h > 0:
+                    scale = target_h / crop_h
+                    new_w = max(20, int(crop_w * scale))
+                    char_crop = char_crop.resize((new_w, target_h), Image.LANCZOS)
+                
+                photo = ImageTk.PhotoImage(char_crop)
+                char_images.append(photo)
+                
+                img_label = tk.Label(char_frame, image=photo, bg='white', relief=tk.SUNKEN, bd=1)
+                img_label.pack(side=tk.LEFT, padx=5, pady=5)
+            except Exception:
+                tk.Label(char_frame, text="[img]", bg='white').pack(side=tk.LEFT, padx=5, pady=5)
+            
+            # Info and edit
+            info_frame = tk.Frame(char_frame, bg='white')
+            info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+            
+            tk.Label(info_frame, text=f"#{i+1}", font=('Segoe UI', 9, 'bold'), 
+                     bg='white', fg='#666', width=4).pack(side=tk.LEFT)
+            
+            # Editable label entry
+            entry = tk.Entry(info_frame, font=('Segoe UI', 11, 'bold'), width=5, justify='center')
+            entry.insert(0, label)
+            entry.pack(side=tk.LEFT, padx=5)
+            
+            # Score label
+            if score > 0:
+                score_text = f"({score:.2f})"
+                tk.Label(info_frame, text=score_text, font=('Segoe UI', 8), 
+                         bg='white', fg='#999').pack(side=tk.LEFT, padx=5)
+            
+            # Coords label
+            coords_text = f"[{x1},{y1},{x2-x1}x{y2-y1}]"
+            tk.Label(info_frame, text=coords_text, font=('Consolas', 8), 
+                     bg='white', fg='#aaa').pack(side=tk.LEFT, padx=5)
+            
+            # Delete button
+            def make_delete(idx):
+                def delete_char():
+                    if messagebox.askyesno("Delete", f"Delete character #{idx+1}?"):
+                        boxes.pop(idx)
+                        refresh_char_list()
+                return delete_char
+            
+            tk.Button(info_frame, text="✕", command=make_delete(i),
+                     bg='#ffcccc', fg='#cc0000', font=('Segoe UI', 9),
+                     padx=5, pady=0).pack(side=tk.RIGHT, padx=5)
+            
+            char_entries.append({
+                'entry': entry,
+                'coords': (x1, y1, x2, y2),
+                'index': i
+            })
+    
+    # Initial population
+    refresh_char_list()
+    
+    # Action buttons frame
+    btn_frame = tk.Frame(scroll_frame, bg='#f4f7fb')
+    btn_frame.pack(fill=tk.X, padx=10, pady=(15, 20))
+    
+    def update_labels():
+        """Update all labels from entries."""
+        for entry_info in char_entries:
+            idx = entry_info['index']
+            if idx < len(boxes):
+                boxes[idx]['label'] = entry_info['entry'].get().strip() or '?'
+        messagebox.showinfo("Updated", "Labels updated successfully.")
+    
+    def save_annotations():
+        """Save character annotations to JSON file."""
+        # Update labels first
+        for entry_info in char_entries:
+            idx = entry_info['index']
+            if idx < len(boxes):
+                boxes[idx]['label'] = entry_info['entry'].get().strip() or '?'
+        
+        save_path = filedialog.asksaveasfilename(
+            defaultextension='.json',
+            filetypes=[('JSON files', '*.json'), ('All files', '*.*')],
+            title="Save Character Annotations"
+        )
+        
+        if save_path:
+            try:
+                # Build COCO-style format
+                coco = {
+                    'images': [{
+                        'id': 1,
+                        'file_name': os.path.basename(image_path),
+                        'width': img_width,
+                        'height': img_height
+                    }],
+                    'annotations': [],
+                    'categories': []
+                }
+                
+                cat_map = {}
+                cat_id = 1
+                ann_id = 1
+                
+                for char_info in boxes:
+                    x1, y1, x2, y2 = char_info['coords']
+                    label = char_info.get('label', '?')
+                    
+                    if label not in cat_map:
+                        cat_map[label] = cat_id
+                        coco['categories'].append({'id': cat_id, 'name': label})
+                        cat_id += 1
+                    
+                    x, y = min(x1, x2), min(y1, y2)
+                    w, h = abs(x2 - x1), abs(y2 - y1)
+                    
+                    coco['annotations'].append({
+                        'id': ann_id,
+                        'image_id': 1,
+                        'category_id': cat_map[label],
+                        'bbox': [x, y, w, h],
+                        'area': w * h,
+                        'iscrowd': 0
+                    })
+                    ann_id += 1
+                
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump(coco, f, indent=2, ensure_ascii=False)
+                messagebox.showinfo("Saved", f"Annotations saved to:\n{save_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save: {e}")
+    
+    def export_crops():
+        """Export all character crops to a folder."""
+        folder = filedialog.askdirectory(title="Select folder to save character crops")
+        if not folder:
+            return
+        
+        try:
+            # Update labels first
+            for entry_info in char_entries:
+                idx = entry_info['index']
+                if idx < len(boxes):
+                    boxes[idx]['label'] = entry_info['entry'].get().strip() or '?'
+            
+            count = 0
+            for i, char_info in enumerate(boxes):
+                x1, y1, x2, y2 = char_info['coords']
+                label = char_info.get('label', 'unknown')
+                safe_label = label.replace('/', '_').replace('\\', '_').replace(':', '_')
+                
+                char_crop = original_img.crop((x1, y1, x2, y2))
+                filename = f"{safe_label}_{i:04d}.png"
+                char_crop.save(os.path.join(folder, filename))
+                count += 1
+            
+            messagebox.showinfo("Exported", f"Exported {count} character crops to:\n{folder}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export: {e}")
+    
+    # Buttons
+    tk.Button(btn_frame, text="✏️ Update Labels", command=update_labels,
+              bg='#5a9fd4', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=12, pady=5).pack(side=tk.LEFT, padx=5)
+    
+    tk.Button(btn_frame, text="💾 Save JSON", command=save_annotations,
+              bg='#6cb6ff', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=15, pady=5).pack(side=tk.LEFT, padx=5)
+    
+    tk.Button(btn_frame, text="📁 Export Crops", command=export_crops,
+              bg='#28a745', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=12, pady=5).pack(side=tk.LEFT, padx=5)
+    
+    tk.Button(btn_frame, text="🔄 Refresh", command=refresh_char_list,
+              bg='#ffc107', fg='#333', font=('Segoe UI', 10, 'bold'),
+              padx=12, pady=5).pack(side=tk.RIGHT, padx=5)
+    
+    # Store references in state
+    S.char_annotation_images = char_images
+    S.char_annotation_entries = char_entries
+    S.char_annotation_boxes = boxes
+    S.char_annotation_canvas = canvas
+
 
 def character_annotate():
     S.r = tk.Toplevel()

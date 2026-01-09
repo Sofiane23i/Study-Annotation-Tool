@@ -566,14 +566,152 @@ btn_annotate.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 btn_annotate.config(state='disabled')
 
 def detect_characters():
-    """Open character-level annotation/detection flow."""
+    """Detect characters using saved templates and display in right panel."""
+    from tkinter import messagebox
+    import json
+    from utils import match_template_in_image
+    
     if not ensure_images_available():
         return
     
     # Disable other detection buttons
     disable_other_detection_buttons('character')
     
-    character_annotate()
+    # Get current image path
+    image_path = None
+    if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
+        image_path = S.list_of_files[S.pos]
+    elif hasattr(S, 'gan_batch_images') and S.gan_batch_images:
+        gan_batch_dir = os.path.join(os.path.dirname(__file__), 'gan_output_data', 'batch')
+        if os.path.exists(gan_batch_dir):
+            batch_files = sorted([f for f in os.listdir(gan_batch_dir) if f.endswith(('.png', '.jpg'))])
+            if batch_files and S.gan_batch_index < len(batch_files):
+                image_path = os.path.join(gan_batch_dir, batch_files[S.gan_batch_index])
+    
+    if not image_path or not os.path.exists(image_path):
+        messagebox.showwarning("No Image", "Please load an image first.")
+        return
+    
+    # Store for annotation
+    S.char_image_path = image_path
+    
+    # Try to load saved character templates
+    templates_dir = os.path.join(os.path.dirname(__file__), 'character_templates')
+    S.char_templates = []
+    S.char_detected_boxes = []
+    
+    if os.path.exists(templates_dir):
+        # Load all template images
+        for fname in os.listdir(templates_dir):
+            if fname.endswith(('.png', '.jpg')):
+                char_label = os.path.splitext(fname)[0]  # filename without extension is the label
+                template_path = os.path.join(templates_dir, fname)
+                S.char_templates.append({'label': char_label, 'path': template_path})
+    
+    # Load image for detection
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            messagebox.showerror("Error", f"Could not read image:\n{image_path}")
+            return
+        
+        pil_img = Image.open(image_path)
+        
+        # If we have templates, perform template matching
+        detected_chars = []
+        if S.char_templates:
+            # Use threshold from slider if available
+            threshold = S.char_threshold_var.get() if hasattr(S, 'char_threshold_var') else 0.6
+            for tpl_info in S.char_templates:
+                try:
+                    template_img = Image.open(tpl_info['path'])
+                    matches = match_template_in_image(pil_img, template_img, threshold=threshold)
+                    for m in matches:
+                        detected_chars.append({
+                            'coords': (m[0], m[1], m[2], m[3]),
+                            'label': tpl_info['label'],
+                            'score': m[4]
+                        })
+                except Exception as e:
+                    print(f"Template matching error for {tpl_info['label']}: {e}")
+        
+        S.char_detected_boxes = detected_chars
+        
+        # Switch to character detection view
+        if widget_exists(S.load_image_container):
+            S.load_image_container.pack_forget()
+        if widget_exists(S.word_detect_container):
+            S.word_detect_container.pack_forget()
+        if widget_exists(S.line_detect_container):
+            S.line_detect_container.pack_forget()
+        if widget_exists(S.annotation_container):
+            S.annotation_container.pack_forget()
+        if widget_exists(S.char_detect_container):
+            S.char_detect_container.pack(expand=True, fill=tk.BOTH)
+        
+        # Draw image with detected boxes
+        display_detected_characters(img, detected_chars)
+        
+        # Update info label
+        if S.char_templates:
+            if detected_chars:
+                S.char_info_label.config(text=f"Found {len(detected_chars)} characters using {len(S.char_templates)} templates. Click 'Proceed' to annotate.")
+            else:
+                S.char_info_label.config(text=f"No matches found with {len(S.char_templates)} templates. Draw a box to create new template.")
+        else:
+            S.char_info_label.config(text="No character templates saved. Draw a bounding box around a character to create a template.")
+        
+        if hasattr(S, 'update_status') and S.update_status:
+            S.update_status(f"Character detection: {len(detected_chars)} found")
+        
+        # Enable annotation button
+        if widget_exists(btn_char_annotate):
+            btn_char_annotate.config(state='normal')
+            
+    except Exception as e:
+        messagebox.showerror("Error", f"Character detection failed:\n{str(e)}")
+        import traceback
+        traceback.print_exc()
+
+def display_detected_characters(img, detected_chars):
+    """Display image with detected character boxes on the character detection canvas."""
+    if not hasattr(S, 'char_detect_canvas'):
+        return
+    
+    canvas = S.char_detect_canvas
+    canvas.delete('all')
+    
+    # Draw image with character boxes
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_with_chars = img_rgb.copy()
+    
+    # Draw rectangles around detected characters
+    for i, char_info in enumerate(detected_chars):
+        x1, y1, x2, y2 = char_info['coords']
+        label = char_info['label']
+        cv2.rectangle(img_with_chars, (x1, y1), (x2, y2), (255, 100, 100), 2)
+        cv2.putText(img_with_chars, label, (x1, y1 - 5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 100), 1)
+    
+    # Resize for display
+    h, w = img_with_chars.shape[:2]
+    canvas_w, canvas_h = 800, 600
+    scale = min(canvas_w / w, canvas_h / h, 1.0)
+    new_w, new_h = int(w * scale), int(h * scale)
+    
+    img_resized = cv2.resize(img_with_chars, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    pil_img = Image.fromarray(img_resized)
+    S.char_detect_photo = ImageTk.PhotoImage(pil_img)
+    
+    # Center on canvas
+    x_offset = (canvas_w - new_w) // 2
+    y_offset = (canvas_h - new_h) // 2
+    canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=S.char_detect_photo)
+    
+    # Store scale info for bounding box drawing
+    S.char_canvas_scale = scale
+    S.char_canvas_offset = (x_offset, y_offset)
+    S.char_img_size = (w, h)
 
 # Character detection row
 char_row = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -899,6 +1037,194 @@ btn_proceed_line_annotation.pack(side=tk.RIGHT, padx=4)
 S.line_detect_container = line_detect_container
 S.line_detect_canvas = line_canvas
 S.line_info_label = line_info_label
+
+# ============================================
+# CONTAINER 2c: Character Detection Review (hidden until char detect)
+# ============================================
+char_detect_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
+char_detect_container.pack_forget()
+
+char_detect_header = tk.Label(char_detect_container, text=" 🔤 Character Detection ",
+                              font=('Segoe UI', 12, 'bold'),
+                              bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                              relief=tk.FLAT, bd=1, padx=10, pady=8)
+char_detect_header.pack(fill=tk.X, pady=(0, 10))
+
+char_canvas = tk.Canvas(char_detect_container, width=800, height=600,
+                        bg='#eef2f7', highlightthickness=1, highlightbackground=COLORS['border'])
+char_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+char_info_label = tk.Label(char_detect_container, text="",
+                           font=('Segoe UI', 10), bg=COLORS['bg_dark'], fg=COLORS['text_light'])
+char_info_label.pack(fill=tk.X, pady=(4, 0))
+
+# Template drawing controls
+char_controls_frame = tk.Frame(char_detect_container, bg=COLORS['bg_dark'])
+char_controls_frame.pack(fill=tk.X, pady=(4, 0))
+
+char_draw_mode = tk.BooleanVar(value=False)
+char_threshold_var = tk.DoubleVar(value=0.6)
+
+def toggle_char_draw_mode():
+    if char_draw_mode.get():
+        char_canvas.config(cursor='crosshair')
+        S.char_info_label.config(text="Draw mode ON: Click and drag to draw a bounding box around a character.")
+    else:
+        char_canvas.config(cursor='')
+        if hasattr(S, 'char_detected_boxes'):
+            count = len(S.char_detected_boxes)
+            S.char_info_label.config(text=f"Draw mode OFF. {count} characters detected.")
+
+tk.Checkbutton(char_controls_frame, text="✏️ Draw Template Box", variable=char_draw_mode,
+               command=toggle_char_draw_mode, bg=COLORS['bg_dark'], fg=COLORS['text_light'],
+               selectcolor=COLORS['bg_section'], activebackground=COLORS['bg_dark'],
+               font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=10)
+
+tk.Label(char_controls_frame, text="Threshold:", font=('Segoe UI', 9),
+         bg=COLORS['bg_dark'], fg=COLORS['text_light']).pack(side=tk.LEFT, padx=(20, 5))
+tk.Scale(char_controls_frame, from_=0.3, to=0.95, resolution=0.05, orient=tk.HORIZONTAL,
+         variable=char_threshold_var, length=120, bg=COLORS['bg_dark'], fg=COLORS['text_light'],
+         troughcolor=COLORS['bg_section'], highlightthickness=0).pack(side=tk.LEFT)
+
+def rematch_characters():
+    """Re-run template matching with current threshold."""
+    if hasattr(S, 'char_image_path') and S.char_image_path:
+        detect_characters()
+
+tk.Button(char_controls_frame, text="🔄 Re-match", command=rematch_characters,
+          bg=COLORS['bg_section'], fg=COLORS['text_light'], padx=8, pady=2).pack(side=tk.LEFT, padx=10)
+
+char_btn_frame = tk.Frame(char_detect_container, bg=COLORS['bg_dark'])
+char_btn_frame.pack(fill=tk.X, pady=(8, 0))
+
+def back_to_image_view_from_char():
+    if widget_exists(char_detect_container):
+        char_detect_container.pack_forget()
+    if widget_exists(load_image_container):
+        load_image_container.pack(expand=True, fill=tk.BOTH)
+
+def proceed_to_char_annotation():
+    """Start character annotation in the annotation panel."""
+    if widget_exists(S.char_detect_container):
+        S.char_detect_container.pack_forget()
+    if widget_exists(S.load_image_container):
+        S.load_image_container.pack_forget()
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    
+    # Start embedded character annotation
+    from actions.character_annotate import start_embedded_character_annotation
+    if hasattr(S, 'char_image_path') and hasattr(S, 'char_detected_boxes'):
+        start_embedded_character_annotation(S.char_image_path, S.char_detected_boxes, S.char_templates)
+
+btn_back_char_view = tk.Button(char_btn_frame, text="⬅ Back to image view", command=back_to_image_view_from_char,
+                          bg=COLORS['bg_section'], fg=COLORS['text_light'], padx=10, pady=6)
+btn_back_char_view.pack(side=tk.LEFT, padx=4)
+
+btn_proceed_char_annotation = tk.Button(char_btn_frame, text="Proceed to annotation", command=proceed_to_char_annotation,
+                                   bg=COLORS['accent'], fg='white', padx=12, pady=6)
+btn_proceed_char_annotation.pack(side=tk.RIGHT, padx=4)
+
+# Bounding box drawing on char canvas
+char_drag_state = {'rect': None, 'start': None}
+
+def char_canvas_to_image_coords(canvas_x, canvas_y):
+    """Convert canvas coordinates to image coordinates."""
+    if not hasattr(S, 'char_canvas_scale') or not hasattr(S, 'char_canvas_offset'):
+        return canvas_x, canvas_y
+    scale = S.char_canvas_scale
+    x_off, y_off = S.char_canvas_offset
+    img_x = int((canvas_x - x_off) / scale)
+    img_y = int((canvas_y - y_off) / scale)
+    return img_x, img_y
+
+def on_char_canvas_press(event):
+    if not char_draw_mode.get():
+        return
+    char_drag_state['start'] = (event.x, event.y)
+    char_drag_state['rect'] = char_canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='red', width=2)
+
+def on_char_canvas_drag(event):
+    if not char_draw_mode.get() or not char_drag_state['rect']:
+        return
+    char_canvas.coords(char_drag_state['rect'], char_drag_state['start'][0], char_drag_state['start'][1], event.x, event.y)
+
+def on_char_canvas_release(event):
+    if not char_draw_mode.get() or not char_drag_state['rect']:
+        return
+    
+    from tkinter import simpledialog
+    
+    x1d, y1d = char_drag_state['start']
+    x2d, y2d = event.x, event.y
+    char_canvas.delete(char_drag_state['rect'])
+    char_drag_state['rect'] = None
+    char_drag_state['start'] = None
+    
+    # Convert to image coordinates
+    ix1, iy1 = char_canvas_to_image_coords(x1d, y1d)
+    ix2, iy2 = char_canvas_to_image_coords(x2d, y2d)
+    x1i, y1i = min(ix1, ix2), min(iy1, iy2)
+    x2i, y2i = max(ix1, ix2), max(iy1, iy2)
+    
+    # Validate box size
+    if x2i - x1i < 5 or y2i - y1i < 5:
+        return
+    
+    # Ask for character label
+    label = simpledialog.askstring("Character Label", "Enter character for this template:")
+    if not label:
+        return
+    
+    # Save template image
+    try:
+        templates_dir = os.path.join(os.path.dirname(__file__), 'character_templates')
+        os.makedirs(templates_dir, exist_ok=True)
+        
+        pil_img = Image.open(S.char_image_path)
+        template_crop = pil_img.crop((x1i, y1i, x2i, y2i))
+        
+        # Save with label as filename (handle special chars)
+        safe_label = label.replace('/', '_').replace('\\', '_').replace(':', '_')
+        template_path = os.path.join(templates_dir, f"{safe_label}.png")
+        template_crop.save(template_path)
+        
+        # Add to detected boxes
+        if not hasattr(S, 'char_detected_boxes'):
+            S.char_detected_boxes = []
+        S.char_detected_boxes.append({
+            'coords': (x1i, y1i, x2i, y2i),
+            'label': label,
+            'score': 1.0
+        })
+        
+        # Add to templates list
+        if not hasattr(S, 'char_templates'):
+            S.char_templates = []
+        S.char_templates.append({'label': label, 'path': template_path})
+        
+        # Redraw
+        img = cv2.imread(S.char_image_path)
+        display_detected_characters(img, S.char_detected_boxes)
+        
+        S.char_info_label.config(text=f"Template '{label}' saved! {len(S.char_detected_boxes)} characters total. Click Re-match to find more.")
+        
+        from tkinter import messagebox
+        messagebox.showinfo("Template Saved", f"Character template '{label}' saved.\nClick 'Re-match' to find similar characters.")
+        
+    except Exception as e:
+        from tkinter import messagebox
+        messagebox.showerror("Error", f"Failed to save template: {e}")
+
+char_canvas.bind('<ButtonPress-1>', on_char_canvas_press)
+char_canvas.bind('<B1-Motion>', on_char_canvas_drag)
+char_canvas.bind('<ButtonRelease-1>', on_char_canvas_release)
+
+# Store in state
+S.char_detect_container = char_detect_container
+S.char_detect_canvas = char_canvas
+S.char_info_label = char_info_label
+S.char_threshold_var = char_threshold_var
 
 # ============================================
 # CONTAINER 3: Annotation Interface (hidden until annotation)
