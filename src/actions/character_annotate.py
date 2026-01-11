@@ -272,6 +272,10 @@ def start_embedded_character_annotation(image_path, detected_chars, templates=No
             messagebox.showerror("Error", f"Failed to export: {e}")
     
     # Buttons
+    tk.Button(btn_frame, text="⬅ Back to Detection", command=lambda: S.back_to_detection_from_annotation() if hasattr(S, 'back_to_detection_from_annotation') else None,
+              bg='#6c757d', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=12, pady=5).pack(side=tk.LEFT, padx=5)
+    
     tk.Button(btn_frame, text="✏️ Update Labels", command=update_labels,
               bg='#5a9fd4', fg='white', font=('Segoe UI', 10, 'bold'),
               padx=12, pady=5).pack(side=tk.LEFT, padx=5)

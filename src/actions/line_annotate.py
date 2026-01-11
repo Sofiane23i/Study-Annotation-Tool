@@ -864,6 +864,10 @@ def start_embedded_line_annotation(image_path, detected_lines, text_lines=None):
             line_data['entry'].delete(0, tk.END)
     
     # Buttons
+    tk.Button(btn_frame, text="⬅ Back to Detection", command=lambda: S.back_to_detection_from_annotation() if hasattr(S, 'back_to_detection_from_annotation') else None,
+              bg='#6c757d', fg='white', font=('Segoe UI', 10, 'bold'),
+              padx=12, pady=5).pack(side=tk.LEFT, padx=5)
+    
     tk.Button(btn_frame, text="💾 Save JSON", command=save_annotations,
               bg='#6cb6ff', fg='white', font=('Segoe UI', 10, 'bold'),
               padx=15, pady=5).pack(side=tk.LEFT, padx=5)

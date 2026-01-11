@@ -27,6 +27,15 @@ def annotate():
     canvas1 = tk.Canvas(container, height=1500, width=1500, bg='#f7f9fc')
     canvas1.pack(fill=tk.BOTH, expand=True)
 
+    # Add Back to Detection button at the top if embedded
+    back_btn_window = None
+    if use_embed and hasattr(S, 'back_to_detection_from_annotation'):
+        back_btn = tk.Button(canvas1, text="⬅ Back to Detection", 
+                  command=S.back_to_detection_from_annotation,
+                  bg='#6c757d', fg='white', font=('Segoe UI', 10, 'bold'),
+                  padx=12, pady=5)
+        back_btn_window = canvas1.create_window(10, 10, anchor=tk.NW, window=back_btn)
+
     yscrollbar = tk.Scrollbar(canvas1)
     yscrollbar.grid(row=0, column=1, sticky=tk.N+tk.S)
 
@@ -53,8 +62,10 @@ def annotate():
     S.text_box.config(yscrollcommand=sb.set)
     sb.config(command=S.text_box.yview)
 
-    canvas.grid(row=0, column=0, sticky="ew")
-    canvas2.grid(row=0, column=2)
+    # Position canvases - offset if back button exists
+    start_y = 50 if back_btn_window else 0
+    canvas.place(x=0, y=start_y)
+    canvas2.place(x=1310, y=start_y)
 
     out_dir = getattr(S, 'directoryout', None)
     if not out_dir:

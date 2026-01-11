@@ -181,6 +181,7 @@ mode_status = tk.Label(section1, textvariable=segmentation_mode_var,
                        bg=COLORS['bg_section'], fg=COLORS['text_muted'])
 mode_status.pack(fill=tk.X, pady=(4, 0))
 S.segmentation_mode_var = segmentation_mode_var
+S.input_mode_var = input_mode_var
 
 def widget_exists(widget):
     """Check if a tkinter widget still exists."""
@@ -188,6 +189,63 @@ def widget_exists(widget):
         return widget is not None and widget.winfo_exists()
     except:
         return False
+
+
+def back_to_detection_from_annotation():
+    """Go back from annotation panel to the corresponding detection panel and re-enable the detection button."""
+    mode = getattr(S, 'current_annotation_mode', None)
+    
+    # Hide annotation container
+    if widget_exists(S.annotation_container):
+        S.annotation_container.pack_forget()
+    
+    if mode == 'word':
+        # Re-enable word detection button
+        if widget_exists(S.btn_save):
+            S.btn_save.config(state='normal')
+        # Show word detection container
+        if widget_exists(S.word_detect_container):
+            S.word_detect_container.pack(expand=True, fill=tk.BOTH)
+    elif mode == 'line':
+        # Re-enable line detection button
+        if widget_exists(S.btn_line_detect):
+            S.btn_line_detect.config(state='normal')
+        # Show line detection container
+        if widget_exists(S.line_detect_container):
+            S.line_detect_container.pack(expand=True, fill=tk.BOTH)
+    elif mode == 'character':
+        # Re-enable character detection button
+        if widget_exists(S.btn_char_detect):
+            S.btn_char_detect.config(state='normal')
+        # Show character detection container
+        if widget_exists(S.char_detect_container):
+            S.char_detect_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        # Default: show the appropriate container based on input mode
+        current_input_mode = S.input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+        if current_input_mode == 'generate' and widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+        elif widget_exists(S.load_image_container):
+            S.load_image_container.pack(expand=True, fill=tk.BOTH)
+
+# Store the function in state so it can be accessed from other modules
+S.back_to_detection_from_annotation = back_to_detection_from_annotation
+
+
+def update_back_button_text():
+    """Update back button text based on current input mode."""
+    is_generate_mode = input_mode_var.get() == 'generate'
+    load_text = "⬅ Back to image view"
+    generate_text = "⬅ Back to Generate GAN"
+    
+    btn_text = generate_text if is_generate_mode else load_text
+    
+    if hasattr(S, 'btn_back_view') and widget_exists(S.btn_back_view):
+        S.btn_back_view.config(text=btn_text)
+    if hasattr(S, 'btn_back_line_view') and widget_exists(S.btn_back_line_view):
+        S.btn_back_line_view.config(text=btn_text)
+    if hasattr(S, 'btn_back_char_view') and widget_exists(S.btn_back_char_view):
+        S.btn_back_char_view.config(text=btn_text)
 
 
 def images_available():
@@ -355,25 +413,30 @@ def detect_lines_with_autofill():
     # Disable other detection buttons
     disable_other_detection_buttons('line')
 
-    # Check if image is loaded
+    # Check if image is loaded - use input mode to determine source
     image_path = None
-    if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
-        image_path = S.list_of_files[S.pos]
-    elif hasattr(S, 'gan_batch_images') and S.gan_batch_images:
-        # Use GAN generated images
-        gan_batch_dir = os.path.join(os.path.dirname(__file__), 'gan_output_data', 'batch')
-        if os.path.exists(gan_batch_dir):
-            batch_files = sorted([f for f in os.listdir(gan_batch_dir) if f.endswith(('.png', '.jpg'))])
-            if batch_files and S.gan_batch_index < len(batch_files):
-                image_path = os.path.join(gan_batch_dir, batch_files[S.gan_batch_index])
+    current_mode = input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+    
+    if current_mode == 'generate':
+        # Generate mode: use GAN generated images
+        if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
+            gan_idx = getattr(S, 'gan_batch_index', 0)
+            if gan_idx < len(S.gan_batch_images):
+                image_path = S.gan_batch_images[gan_idx]
+    else:
+        # Load mode: use loaded images
+        if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
+            image_path = S.list_of_files[S.pos]
     
     if not image_path or not os.path.exists(image_path):
         messagebox.showwarning("No Image", "Please load an image first:\n• Open Folder to load images\n• Generate HTR to create synthetic images")
         return
     
-    # Get input text for auto-fill
+    # Get input text for auto-fill (check GAN input text first for generate mode)
     input_text = ""
-    if hasattr(S, 'input_text') and S.input_text:
+    if hasattr(S, 'gan_input_text') and S.gan_input_text:
+        input_text = S.gan_input_text.strip()
+    elif hasattr(S, 'input_text') and S.input_text:
         input_text = S.input_text.strip()
     elif hasattr(S, 'input_text_area') and S.input_text_area:
         input_text = S.input_text_area.get("1.0", "end-1c").strip()
@@ -402,12 +465,17 @@ def detect_lines_with_autofill():
         # Switch to line detection view
         if widget_exists(S.load_image_container):
             S.load_image_container.pack_forget()
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack_forget()
         if widget_exists(S.word_detect_container):
             S.word_detect_container.pack_forget()
         if widget_exists(S.annotation_container):
             S.annotation_container.pack_forget()
         if widget_exists(S.line_detect_container):
             S.line_detect_container.pack(expand=True, fill=tk.BOTH)
+        
+        # Update back button text based on input mode
+        update_back_button_text()
         
         # Draw lines on canvas
         display_detected_lines(img, lines)
@@ -490,8 +558,12 @@ def detect_words_with_mode_lock():
         S.annotation_container.pack_forget()
     if widget_exists(S.load_image_container):
         S.load_image_container.pack_forget()
+    if widget_exists(S.generate_htr_container):
+        S.generate_htr_container.pack_forget()
     if widget_exists(S.word_detect_container):
         S.word_detect_container.pack(expand=True, fill=tk.BOTH)
+    # Update back button text based on input mode
+    update_back_button_text()
     save_file()
 
 # Word detection row
@@ -512,16 +584,20 @@ def detect_characters():
     # Disable other detection buttons
     disable_other_detection_buttons('character')
     
-    # Get current image path
+    # Get current image path - use input mode to determine source
     image_path = None
-    if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
-        image_path = S.list_of_files[S.pos]
-    elif hasattr(S, 'gan_batch_images') and S.gan_batch_images:
-        gan_batch_dir = os.path.join(os.path.dirname(__file__), 'gan_output_data', 'batch')
-        if os.path.exists(gan_batch_dir):
-            batch_files = sorted([f for f in os.listdir(gan_batch_dir) if f.endswith(('.png', '.jpg'))])
-            if batch_files and S.gan_batch_index < len(batch_files):
-                image_path = os.path.join(gan_batch_dir, batch_files[S.gan_batch_index])
+    current_mode = input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+    
+    if current_mode == 'generate':
+        # Generate mode: use GAN generated images
+        if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
+            gan_idx = getattr(S, 'gan_batch_index', 0)
+            if gan_idx < len(S.gan_batch_images):
+                image_path = S.gan_batch_images[gan_idx]
+    else:
+        # Load mode: use loaded images
+        if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
+            image_path = S.list_of_files[S.pos]
     
     if not image_path or not os.path.exists(image_path):
         messagebox.showwarning("No Image", "Please load an image first.")
@@ -575,6 +651,8 @@ def detect_characters():
         # Switch to character detection view
         if widget_exists(S.load_image_container):
             S.load_image_container.pack_forget()
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack_forget()
         if widget_exists(S.word_detect_container):
             S.word_detect_container.pack_forget()
         if widget_exists(S.line_detect_container):
@@ -583,6 +661,9 @@ def detect_characters():
             S.annotation_container.pack_forget()
         if widget_exists(S.char_detect_container):
             S.char_detect_container.pack(expand=True, fill=tk.BOTH)
+        
+        # Update back button text based on input mode
+        update_back_button_text()
         
         # Draw image with detected boxes
         display_detected_characters(img, detected_chars)
@@ -872,8 +953,23 @@ word_btn_frame.pack(fill=tk.X, pady=(8, 0))
 def back_to_image_view():
     if widget_exists(word_detect_container):
         word_detect_container.pack_forget()
-    if widget_exists(load_image_container):
-        load_image_container.pack(expand=True, fill=tk.BOTH)
+    # Show appropriate container based on input mode
+    if input_mode_var.get() == 'generate':
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        if widget_exists(load_image_container):
+            load_image_container.pack(expand=True, fill=tk.BOTH)
+    # Enable all detection buttons
+    if widget_exists(btn_save):
+        btn_save.config(state='normal')
+    if widget_exists(btn_line_detect):
+        btn_line_detect.config(state='normal')
+    if widget_exists(btn_char_detect):
+        btn_char_detect.config(state='normal')
+    # Reset segmentation mode to allow switching
+    S.segmentation_mode = None
+    segmentation_mode_var.set("Segmentation mode: Not selected")
 
 def proceed_to_annotation_from_word_panel():
     if hasattr(S, 'perform_cropping_current_detection'):
@@ -882,8 +978,14 @@ def proceed_to_annotation_from_word_panel():
         S.word_detect_container.pack_forget()
     if widget_exists(S.load_image_container):
         S.load_image_container.pack_forget()
+    if widget_exists(S.generate_htr_container):
+        S.generate_htr_container.pack_forget()
     if widget_exists(S.annotation_container):
         S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    # Disable word detection button while in annotation
+    if widget_exists(btn_save):
+        btn_save.config(state='disabled')
+    S.current_annotation_mode = 'word'
     annotate()
 
 btn_back_view = tk.Button(word_btn_frame, text="⬅ Back to image view", command=back_to_image_view,
@@ -897,6 +999,7 @@ btn_proceed_annotation.pack(side=tk.RIGHT, padx=4)
 # store in state for detection rendering
 S.word_detect_container = word_detect_container
 S.word_detect_canvas = word_canvas
+S.btn_back_view = btn_back_view
 
 # ============================================
 # CONTAINER 2b: Line Detection Review (hidden until line detect)
@@ -924,8 +1027,23 @@ line_btn_frame.pack(fill=tk.X, pady=(8, 0))
 def back_to_image_view_from_line():
     if widget_exists(line_detect_container):
         line_detect_container.pack_forget()
-    if widget_exists(load_image_container):
-        load_image_container.pack(expand=True, fill=tk.BOTH)
+    # Show appropriate container based on input mode
+    if input_mode_var.get() == 'generate':
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        if widget_exists(load_image_container):
+            load_image_container.pack(expand=True, fill=tk.BOTH)
+    # Enable all detection buttons
+    if widget_exists(btn_save):
+        btn_save.config(state='normal')
+    if widget_exists(btn_line_detect):
+        btn_line_detect.config(state='normal')
+    if widget_exists(btn_char_detect):
+        btn_char_detect.config(state='normal')
+    # Reset segmentation mode to allow switching
+    S.segmentation_mode = None
+    segmentation_mode_var.set("Segmentation mode: Not selected")
 
 def proceed_to_line_annotation():
     """Start line-by-line annotation in the annotation panel."""
@@ -933,8 +1051,15 @@ def proceed_to_line_annotation():
         S.line_detect_container.pack_forget()
     if widget_exists(S.load_image_container):
         S.load_image_container.pack_forget()
+    if widget_exists(S.generate_htr_container):
+        S.generate_htr_container.pack_forget()
     if widget_exists(S.annotation_container):
         S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    
+    # Disable line detection button while in annotation
+    if widget_exists(btn_line_detect):
+        btn_line_detect.config(state='disabled')
+    S.current_annotation_mode = 'line'
     
     # Start line annotation with detected lines
     from actions.line_annotate import start_embedded_line_annotation
@@ -953,6 +1078,7 @@ btn_proceed_line_annotation.pack(side=tk.RIGHT, padx=4)
 # store in state for line detection rendering
 S.line_detect_container = line_detect_container
 S.line_detect_canvas = line_canvas
+S.btn_back_line_view = btn_back_line_view
 S.line_info_label = line_info_label
 
 # ============================================
@@ -1017,8 +1143,23 @@ char_btn_frame.pack(fill=tk.X, pady=(8, 0))
 def back_to_image_view_from_char():
     if widget_exists(char_detect_container):
         char_detect_container.pack_forget()
-    if widget_exists(load_image_container):
-        load_image_container.pack(expand=True, fill=tk.BOTH)
+    # Show appropriate container based on input mode
+    if input_mode_var.get() == 'generate':
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        if widget_exists(load_image_container):
+            load_image_container.pack(expand=True, fill=tk.BOTH)
+    # Enable all detection buttons
+    if widget_exists(btn_save):
+        btn_save.config(state='normal')
+    if widget_exists(btn_line_detect):
+        btn_line_detect.config(state='normal')
+    if widget_exists(btn_char_detect):
+        btn_char_detect.config(state='normal')
+    # Reset segmentation mode to allow switching
+    S.segmentation_mode = None
+    segmentation_mode_var.set("Segmentation mode: Not selected")
 
 def proceed_to_char_annotation():
     """Start character annotation in the annotation panel."""
@@ -1026,8 +1167,15 @@ def proceed_to_char_annotation():
         S.char_detect_container.pack_forget()
     if widget_exists(S.load_image_container):
         S.load_image_container.pack_forget()
+    if widget_exists(S.generate_htr_container):
+        S.generate_htr_container.pack_forget()
     if widget_exists(S.annotation_container):
         S.annotation_container.pack(expand=True, fill=tk.BOTH)
+    
+    # Disable character detection button while in annotation
+    if widget_exists(btn_char_detect):
+        btn_char_detect.config(state='disabled')
+    S.current_annotation_mode = 'character'
     
     # Start embedded character annotation
     from actions.character_annotate import start_embedded_character_annotation
@@ -1041,6 +1189,8 @@ btn_back_char_view.pack(side=tk.LEFT, padx=4)
 btn_proceed_char_annotation = tk.Button(char_btn_frame, text="Proceed to annotation", command=proceed_to_char_annotation,
                                    bg=COLORS['accent'], fg='white', padx=12, pady=6)
 btn_proceed_char_annotation.pack(side=tk.RIGHT, padx=4)
+
+S.btn_back_char_view = btn_back_char_view
 
 # Bounding box drawing on char canvas
 char_drag_state = {'rect': None, 'start': None}

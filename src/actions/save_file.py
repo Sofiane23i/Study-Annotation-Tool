@@ -22,32 +22,36 @@ def save_file():
     src_dir = S.pathDirectory
     dst_dir = S.directorytmp
     
-    # Check if we have a loaded image or if we should use GAN-generated image
-    gan_jpg_path = os.path.join(os.path.dirname(__file__), '..', 'temp_handwriting.jpg')
-    gan_jpg_path = os.path.abspath(gan_jpg_path)
-
-    # Prefer first JPG from gan_output_data/batch if available
-    batch_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch'))
-    batch_jpgs = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
-
+    # Check input mode to determine image source
+    current_mode = S.input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+    
     use_gan_image = False
     source_image_path = None
 
-    if S.list_of_files and len(S.list_of_files) > S.pos:
-        # Use loaded image
-        source_image_path = S.list_of_files[S.pos]
-        print(source_image_path)
-    elif batch_jpgs:
-        # Use first GAN batch JPG
-        source_image_path = os.path.abspath(batch_jpgs[0])
-        print(f"Using GAN batch image: {source_image_path}")
-        use_gan_image = True
-    elif os.path.exists(gan_jpg_path):
-        # Use fallback GAN temporary image
-        source_image_path = gan_jpg_path
-        print(f"Using GAN-generated image: {gan_jpg_path}")
-        use_gan_image = True
+    if current_mode == 'generate':
+        # Generate mode: use GAN generated images
+        if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
+            gan_idx = getattr(S, 'gan_batch_index', 0)
+            if gan_idx < len(S.gan_batch_images):
+                source_image_path = S.gan_batch_images[gan_idx]
+                print(f"Using GAN batch image: {source_image_path}")
+                use_gan_image = True
+        
+        # Fallback to temp_handwriting.jpg if no batch images
+        if not source_image_path:
+            gan_jpg_path = os.path.join(os.path.dirname(__file__), '..', 'temp_handwriting.jpg')
+            gan_jpg_path = os.path.abspath(gan_jpg_path)
+            if os.path.exists(gan_jpg_path):
+                source_image_path = gan_jpg_path
+                print(f"Using GAN-generated image: {gan_jpg_path}")
+                use_gan_image = True
     else:
+        # Load mode: use loaded images
+        if S.list_of_files and len(S.list_of_files) > S.pos:
+            source_image_path = S.list_of_files[S.pos]
+            print(f"Using loaded image: {source_image_path}")
+    
+    if not source_image_path or not os.path.exists(source_image_path):
         print("No image available for word detection")
         return
     
