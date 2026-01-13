@@ -255,6 +255,87 @@ def images_available():
     return bool(has_loaded or has_gan)
 
 
+def prompt_for_input_text():
+    """Show a reminder popup to fill input text in the main GUI.
+    Returns True to continue with detection, False to go back to image view.
+    Only shows if input text is empty."""
+    
+    # Check if input text is already filled - if so, skip the popup
+    input_text_content = ""
+    if hasattr(S, 'input_text_area') and S.input_text_area:
+        input_text_content = S.input_text_area.get("1.0", "end-1c").strip()
+    
+    if input_text_content:
+        # Text is already filled, continue without showing popup
+        return True
+    
+    # Create a custom dialog
+    dialog = tk.Toplevel(window)
+    dialog.title("Input Text Reminder")
+    dialog.geometry("520x250")
+    dialog.transient(window)
+    dialog.grab_set()
+    dialog.resizable(False, False)
+    dialog.configure(bg='white')
+    
+    # Center the dialog
+    dialog.update_idletasks()
+    x = window.winfo_x() + (window.winfo_width() - 520) // 2
+    y = window.winfo_y() + (window.winfo_height() - 250) // 2
+    dialog.geometry(f"+{x}+{y}")
+    
+    result = {"continue": False}
+    
+    # Message icon and text
+    msg_frame = tk.Frame(dialog, bg='white')
+    msg_frame.pack(fill=tk.X, padx=25, pady=(20, 10))
+    
+    tk.Label(msg_frame, text="📝", font=('Segoe UI', 28), bg='white').pack(pady=(0, 10))
+    
+    tk.Label(msg_frame, text="Input Text for Auto-Fill Annotation",
+             font=('Segoe UI', 12, 'bold'), bg='white', fg='#333').pack(pady=(0, 8))
+    
+    tk.Label(msg_frame, 
+             text="To automatically fill annotations for detected lines/words,\nplease enter the text content of the image in the\n'Input Text' field on the Load Image panel.",
+             font=('Segoe UI', 10), fg='#555', bg='white', justify=tk.CENTER).pack(pady=(0, 5))
+    
+    tk.Label(msg_frame, 
+             text="You can continue without text, but annotations will be empty.",
+             font=('Segoe UI', 9, 'italic'), fg='#888', bg='white').pack(pady=(5, 0))
+    
+    # Buttons frame
+    btn_frame = tk.Frame(dialog, bg='white')
+    btn_frame.pack(fill=tk.X, padx=25, pady=(15, 20))
+    
+    def on_go_back():
+        result["continue"] = False
+        dialog.destroy()
+    
+    def on_continue():
+        result["continue"] = True
+        dialog.destroy()
+    
+    btn_back = tk.Button(btn_frame, text="⬅ Go Back to Fill Text", command=on_go_back,
+              bg='#e9ecef', fg='#495057', activebackground='#dee2e6',
+              font=('Segoe UI', 10), width=18, pady=6, relief=tk.GROOVE,
+              cursor='hand2')
+    btn_back.pack(side=tk.LEFT, padx=5)
+    
+    btn_continue = tk.Button(btn_frame, text="Continue Without Text ➡", command=on_continue,
+              bg=COLORS['accent'], fg='white', activebackground=COLORS['accent_hover'],
+              font=('Segoe UI', 10, 'bold'), width=20, pady=6, relief=tk.GROOVE,
+              cursor='hand2')
+    btn_continue.pack(side=tk.RIGHT, padx=5)
+    
+    # Handle window close (treat as go back)
+    dialog.protocol("WM_DELETE_WINDOW", on_go_back)
+    
+    # Wait for dialog to close
+    dialog.wait_window()
+    
+    return result["continue"]
+
+
 def ensure_images_available():
     """Guard actions that require images; show guidance if none."""
     if images_available():
@@ -424,9 +505,20 @@ def detect_lines_with_autofill():
             if gan_idx < len(S.gan_batch_images):
                 image_path = S.gan_batch_images[gan_idx]
     else:
-        # Load mode: use loaded images
+        # Load mode: use loaded images and prompt for input text
         if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
             image_path = S.list_of_files[S.pos]
+            # Prompt user - if they choose to go back, reset and return
+            if not prompt_for_input_text():
+                # User chose to go back - reset segmentation mode and re-enable buttons
+                S.segmentation_mode = None
+                if widget_exists(btn_line_detect):
+                    btn_line_detect.config(state='normal')
+                if widget_exists(btn_save):
+                    btn_save.config(state='normal')
+                if widget_exists(btn_char_detect):
+                    btn_char_detect.config(state='normal')
+                return
     
     if not image_path or not os.path.exists(image_path):
         messagebox.showwarning("No Image", "Please load an image first:\n• Open Folder to load images\n• Generate HTR to create synthetic images")
@@ -434,12 +526,15 @@ def detect_lines_with_autofill():
     
     # Get input text for auto-fill (check GAN input text first for generate mode)
     input_text = ""
-    if hasattr(S, 'gan_input_text') and S.gan_input_text:
-        input_text = S.gan_input_text.strip()
-    elif hasattr(S, 'input_text') and S.input_text:
-        input_text = S.input_text.strip()
-    elif hasattr(S, 'input_text_area') and S.input_text_area:
-        input_text = S.input_text_area.get("1.0", "end-1c").strip()
+    if current_mode == 'generate':
+        if hasattr(S, 'gan_input_text') and S.gan_input_text:
+            input_text = S.gan_input_text.strip()
+    else:
+        # Load mode: get text from the input_text_area widget
+        if hasattr(S, 'input_text_area') and S.input_text_area:
+            input_text = S.input_text_area.get("1.0", "end-1c").strip()
+        elif hasattr(S, 'input_text') and S.input_text:
+            input_text = S.input_text.strip()
     
     # Load and process image
     try:
@@ -546,6 +641,9 @@ def detect_words_with_mode_lock():
     # Disable other detection buttons
     disable_other_detection_buttons('word')
     
+    # Check input mode to determine if we should prompt for input text
+    current_mode = input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+    
     # Require either loaded images or generated GAN previews before showing detection
     has_loaded_images = hasattr(S, 'list_of_files') and S.list_of_files
     has_gan_images = getattr(S, 'gan_generated_ready', False) and getattr(S, 'gan_batch_images', [])
@@ -553,6 +651,20 @@ def detect_words_with_mode_lock():
         from tkinter import messagebox
         messagebox.showinfo("No images available", "Load an image folder or generate HTR images before word detection.")
         return
+    
+    # In load mode, prompt for input text to facilitate annotation
+    if current_mode == 'load' and has_loaded_images:
+        if not prompt_for_input_text():
+            # User chose to go back - reset segmentation mode and re-enable buttons
+            S.segmentation_mode = None
+            if widget_exists(btn_line_detect):
+                btn_line_detect.config(state='normal')
+            if widget_exists(btn_save):
+                btn_save.config(state='normal')
+            if widget_exists(btn_char_detect):
+                btn_char_detect.config(state='normal')
+            return
+    
     # Swap to word-detection view
     if widget_exists(S.annotation_container):
         S.annotation_container.pack_forget()
