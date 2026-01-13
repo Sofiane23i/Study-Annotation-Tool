@@ -357,11 +357,22 @@ def set_segmentation_mode(mode):
                 btn_save.config(state='disabled')
             if widget_exists(btn_line_detect):
                 btn_line_detect.config(state='normal')
+            if widget_exists(btn_char_detect):
+                btn_char_detect.config(state='disabled')
         elif mode == 'word':
             if widget_exists(btn_line_detect):
                 btn_line_detect.config(state='disabled')
             if widget_exists(btn_save):
                 btn_save.config(state='normal')
+            if widget_exists(btn_char_detect):
+                btn_char_detect.config(state='disabled')
+        elif mode == 'character':
+            if widget_exists(btn_line_detect):
+                btn_line_detect.config(state='disabled')
+            if widget_exists(btn_save):
+                btn_save.config(state='disabled')
+            if widget_exists(btn_char_detect):
+                btn_char_detect.config(state='normal')
         segmentation_mode_var.set(f"Segmentation mode: {mode.title()} (locked for remaining images)")
         S.auto_detect_on_navigation = True
     elif S.segmentation_mode != mode:
@@ -780,10 +791,18 @@ def detect_characters():
         # Draw image with detected boxes
         display_detected_characters(img, detected_chars)
         
+        # Refresh character listbox
+        if hasattr(S, 'refresh_char_listbox'):
+            S.refresh_char_listbox()
+        
+        # Clear zoom canvas
+        if hasattr(S, 'char_zoom_canvas'):
+            S.char_zoom_canvas.delete('all')
+        
         # Update info label
         if S.char_templates:
             if detected_chars:
-                S.char_info_label.config(text=f"Found {len(detected_chars)} characters using {len(S.char_templates)} templates. Click 'Proceed' to annotate.")
+                S.char_info_label.config(text=f"Found {len(detected_chars)} characters using {len(S.char_templates)} templates. Select to edit.")
             else:
                 S.char_info_label.config(text=f"No matches found with {len(S.char_templates)} templates. Draw a box to create new template.")
         else:
@@ -797,45 +816,13 @@ def detect_characters():
         import traceback
         traceback.print_exc()
 
-def display_detected_characters(img, detected_chars):
+def display_detected_characters(img, detected_chars, highlight_idx=None):
     """Display image with detected character boxes on the character detection canvas."""
     if not hasattr(S, 'char_detect_canvas'):
         return
     
-    canvas = S.char_detect_canvas
-    canvas.delete('all')
-    
-    # Draw image with character boxes
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_with_chars = img_rgb.copy()
-    
-    # Draw rectangles around detected characters
-    for i, char_info in enumerate(detected_chars):
-        x1, y1, x2, y2 = char_info['coords']
-        label = char_info['label']
-        cv2.rectangle(img_with_chars, (x1, y1), (x2, y2), (255, 100, 100), 2)
-        cv2.putText(img_with_chars, label, (x1, y1 - 5), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 100), 1)
-    
-    # Resize for display
-    h, w = img_with_chars.shape[:2]
-    canvas_w, canvas_h = 800, 600
-    scale = min(canvas_w / w, canvas_h / h, 1.0)
-    new_w, new_h = int(w * scale), int(h * scale)
-    
-    img_resized = cv2.resize(img_with_chars, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    pil_img = Image.fromarray(img_resized)
-    S.char_detect_photo = ImageTk.PhotoImage(pil_img)
-    
-    # Center on canvas
-    x_offset = (canvas_w - new_w) // 2
-    y_offset = (canvas_h - new_h) // 2
-    canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=S.char_detect_photo)
-    
-    # Store scale info for bounding box drawing
-    S.char_canvas_scale = scale
-    S.char_canvas_offset = (x_offset, y_offset)
-    S.char_img_size = (w, h)
+    # Use zoom-aware display function
+    display_detected_characters_zoomed(img, detected_chars, highlight_idx)
 
 # Character detection row
 char_row = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -892,12 +879,26 @@ def update_detection_visibility():
     """Show/hide detection controls based on image availability."""
     try:
         available = images_available()
+        seg_mode = getattr(S, 'segmentation_mode', None)
+        
         if available:
+            # Enable all buttons first
             btn_line_detect.config(state='normal')
             btn_save.config(state='normal')
             btn_char_detect.config(state='normal')
             scale_slider.config(state='normal')
             padding_slider.config(state='normal')
+            
+            # Then respect segmentation mode lock if set
+            if seg_mode == 'line':
+                btn_save.config(state='disabled')
+                btn_char_detect.config(state='disabled')
+            elif seg_mode == 'word':
+                btn_line_detect.config(state='disabled')
+                btn_char_detect.config(state='disabled')
+            elif seg_mode == 'character':
+                btn_line_detect.config(state='disabled')
+                btn_save.config(state='disabled')
         else:
             btn_line_detect.config(state='disabled')
             btn_save.config(state='disabled')
@@ -1205,9 +1206,353 @@ char_detect_header = tk.Label(char_detect_container, text=" 🔤 Character Detec
                               relief=tk.FLAT, bd=1, padx=10, pady=8)
 char_detect_header.pack(fill=tk.X, pady=(0, 10))
 
-char_canvas = tk.Canvas(char_detect_container, width=800, height=600,
+# Main content area with image on left, zoom+list on right
+char_main_frame = tk.Frame(char_detect_container, bg=COLORS['bg_dark'])
+char_main_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+# Left panel: main image canvas
+char_left_panel = tk.Frame(char_main_frame, bg=COLORS['bg_dark'])
+char_left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# Zoom and pan controls frame
+char_zoom_controls = tk.Frame(char_left_panel, bg=COLORS['bg_dark'])
+char_zoom_controls.pack(fill=tk.X, pady=(0, 5))
+
+char_zoom_level = tk.DoubleVar(value=1.0)
+char_pan_offset = {'x': 0, 'y': 0}
+char_pan_mode = tk.BooleanVar(value=False)  # Pan/displace mode toggle
+
+def char_zoom_in():
+    """Zoom in on the character detection canvas."""
+    current = char_zoom_level.get()
+    if current < 5.0:
+        char_zoom_level.set(min(current + 0.25, 5.0))
+        update_char_canvas_zoom()
+
+def char_zoom_out():
+    """Zoom out on the character detection canvas."""
+    current = char_zoom_level.get()
+    if current > 0.25:
+        char_zoom_level.set(max(current - 0.25, 0.25))
+        update_char_canvas_zoom()
+
+def char_zoom_reset():
+    """Reset zoom to 100%."""
+    char_zoom_level.set(1.0)
+    char_pan_offset['x'] = 0
+    char_pan_offset['y'] = 0
+    update_char_canvas_zoom()
+
+def toggle_pan_mode():
+    """Toggle pan/displace mode."""
+    if char_pan_mode.get():
+        char_canvas.config(cursor='fleur')
+        char_pan_btn.config(bg=COLORS['success'], relief=tk.SUNKEN)
+    else:
+        char_canvas.config(cursor='')
+        char_pan_btn.config(bg=COLORS['bg_section'], relief=tk.RAISED)
+
+def update_char_canvas_zoom():
+    """Redraw the character canvas with current zoom level."""
+    if not hasattr(S, 'char_image_path') or not S.char_image_path:
+        return
+    if not hasattr(S, 'char_detected_boxes'):
+        S.char_detected_boxes = []
+    
+    img = cv2.imread(S.char_image_path)
+    if img is not None:
+        display_detected_characters_zoomed(img, S.char_detected_boxes)
+    char_zoom_label.config(text=f"{int(char_zoom_level.get() * 100)}%")
+
+def display_detected_characters_zoomed(img, detected_chars, highlight_idx=None):
+    """Display image with zoom and pan support."""
+    canvas = S.char_detect_canvas
+    canvas.delete('all')
+    
+    zoom = char_zoom_level.get()
+    
+    # Draw image with character boxes
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_with_chars = img_rgb.copy()
+    
+    # Draw rectangles around detected characters
+    for i, char_info in enumerate(detected_chars):
+        x1, y1, x2, y2 = char_info['coords']
+        label = char_info['label']
+        
+        if i == highlight_idx:
+            color = (0, 255, 0)
+            thickness = 3
+        else:
+            color = (255, 100, 100)
+            thickness = 2
+        
+        cv2.rectangle(img_with_chars, (x1, y1), (x2, y2), color, thickness)
+        cv2.putText(img_with_chars, label, (x1, y1 - 5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    
+    h, w = img_with_chars.shape[:2]
+    canvas_w, canvas_h = 600, 500
+    
+    # Apply zoom
+    base_scale = min(canvas_w / w, canvas_h / h, 1.0)
+    scale = base_scale * zoom
+    new_w, new_h = int(w * scale), int(h * scale)
+    
+    img_resized = cv2.resize(img_with_chars, (new_w, new_h), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+    pil_img = Image.fromarray(img_resized)
+    S.char_detect_photo = ImageTk.PhotoImage(pil_img)
+    
+    # Center with pan offset
+    x_offset = (canvas_w - new_w) // 2 + char_pan_offset['x']
+    y_offset = (canvas_h - new_h) // 2 + char_pan_offset['y']
+    canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=S.char_detect_photo)
+    
+    # Store scale info for coordinate conversion
+    S.char_canvas_scale = scale
+    S.char_canvas_offset = (x_offset, y_offset)
+    S.char_img_size = (w, h)
+    
+    if 'refresh_char_listbox' in dir():
+        refresh_char_listbox()
+
+# Zoom buttons
+tk.Button(char_zoom_controls, text="➕", command=char_zoom_in,
+          bg=COLORS['accent'], fg='white', font=('Segoe UI', 10, 'bold'),
+          width=3, relief=tk.GROOVE).pack(side=tk.LEFT, padx=2)
+
+tk.Button(char_zoom_controls, text="➖", command=char_zoom_out,
+          bg=COLORS['accent'], fg='white', font=('Segoe UI', 10, 'bold'),
+          width=3, relief=tk.GROOVE).pack(side=tk.LEFT, padx=2)
+
+char_zoom_label = tk.Label(char_zoom_controls, text="100%", font=('Segoe UI', 10, 'bold'),
+                           bg=COLORS['bg_dark'], fg=COLORS['text_light'], width=5)
+char_zoom_label.pack(side=tk.LEFT, padx=5)
+
+tk.Button(char_zoom_controls, text="⟲ Reset", command=char_zoom_reset,
+          bg=COLORS['bg_section'], fg=COLORS['text_light'], font=('Segoe UI', 9),
+          padx=8, relief=tk.GROOVE).pack(side=tk.LEFT, padx=5)
+
+# Pan/Displace mode button
+char_pan_btn = tk.Button(char_zoom_controls, text="✋ Pan", 
+                         command=lambda: [char_pan_mode.set(not char_pan_mode.get()), toggle_pan_mode()],
+                         bg=COLORS['bg_section'], fg=COLORS['text_light'], font=('Segoe UI', 9),
+                         padx=8, relief=tk.RAISED)
+char_pan_btn.pack(side=tk.LEFT, padx=5)
+
+tk.Label(char_zoom_controls, text="(Scroll to zoom)", font=('Segoe UI', 8),
+         bg=COLORS['bg_dark'], fg=COLORS['text_muted']).pack(side=tk.LEFT, padx=10)
+
+char_canvas = tk.Canvas(char_left_panel, width=600, height=500,
                         bg='#eef2f7', highlightthickness=1, highlightbackground=COLORS['border'])
-char_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+char_canvas.pack(fill=tk.BOTH, expand=True)
+
+# Mouse wheel zoom on canvas
+def on_char_canvas_scroll(event):
+    if event.delta > 0:
+        char_zoom_in()
+    else:
+        char_zoom_out()
+
+char_canvas.bind('<MouseWheel>', on_char_canvas_scroll)
+
+# Right panel: zoom window + character list
+char_right_panel = tk.Frame(char_main_frame, bg=COLORS['bg_section'], width=280)
+char_right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
+char_right_panel.pack_propagate(False)
+
+# Zoom window section
+zoom_section = tk.LabelFrame(char_right_panel, text=" 🔍 Zoom View ", 
+                             font=('Segoe UI', 10, 'bold'),
+                             bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                             relief=tk.GROOVE, bd=1, padx=5, pady=5)
+zoom_section.pack(fill=tk.X, padx=5, pady=5)
+
+char_zoom_canvas = tk.Canvas(zoom_section, width=250, height=120,
+                             bg='white', highlightthickness=1, highlightbackground=COLORS['border'])
+char_zoom_canvas.pack(pady=5)
+
+zoom_info_label = tk.Label(zoom_section, text="Click on a character to zoom",
+                           font=('Segoe UI', 8), bg=COLORS['bg_section'], fg=COLORS['text_muted'])
+zoom_info_label.pack()
+
+# Character list section
+list_section = tk.LabelFrame(char_right_panel, text=" 📋 Detected Characters ", 
+                             font=('Segoe UI', 10, 'bold'),
+                             bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                             relief=tk.GROOVE, bd=1, padx=5, pady=5)
+list_section.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+# Listbox with scrollbar
+char_list_frame = tk.Frame(list_section, bg=COLORS['bg_section'])
+char_list_frame.pack(fill=tk.BOTH, expand=True)
+
+char_list_scroll = tk.Scrollbar(char_list_frame)
+char_list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+char_listbox = tk.Listbox(char_list_frame, font=('Consolas', 10), height=12,
+                          yscrollcommand=char_list_scroll.set, selectmode=tk.SINGLE,
+                          bg='white', fg=COLORS['text_light'], selectbackground=COLORS['accent'])
+char_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+char_list_scroll.config(command=char_listbox.yview)
+
+# Edit character label section
+edit_frame = tk.Frame(list_section, bg=COLORS['bg_section'])
+edit_frame.pack(fill=tk.X, pady=(5, 0))
+
+tk.Label(edit_frame, text="Label:", font=('Segoe UI', 9),
+         bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+
+char_edit_var = tk.StringVar()
+char_edit_entry = tk.Entry(edit_frame, textvariable=char_edit_var, font=('Segoe UI', 10), width=10)
+char_edit_entry.pack(side=tk.LEFT, padx=5)
+
+def update_selected_char():
+    """Update the label of the selected character."""
+    selection = char_listbox.curselection()
+    if not selection:
+        from tkinter import messagebox
+        messagebox.showinfo("Select Character", "Please select a character from the list first.")
+        return
+    
+    idx = selection[0]
+    new_label = char_edit_var.get().strip()
+    if not new_label:
+        from tkinter import messagebox
+        messagebox.showwarning("Empty Label", "Please enter a label for the character.")
+        return
+    
+    if hasattr(S, 'char_detected_boxes') and idx < len(S.char_detected_boxes):
+        S.char_detected_boxes[idx]['label'] = new_label
+        # Update listbox
+        refresh_char_listbox()
+        # Redraw image
+        if hasattr(S, 'char_image_path'):
+            img = cv2.imread(S.char_image_path)
+            display_detected_characters(img, S.char_detected_boxes)
+        from tkinter import messagebox
+        messagebox.showinfo("Updated", f"Character label updated to '{new_label}'")
+
+def delete_selected_char():
+    """Delete the selected character from the list."""
+    selection = char_listbox.curselection()
+    if not selection:
+        from tkinter import messagebox
+        messagebox.showinfo("Select Character", "Please select a character from the list first.")
+        return
+    
+    idx = selection[0]
+    if hasattr(S, 'char_detected_boxes') and idx < len(S.char_detected_boxes):
+        deleted = S.char_detected_boxes.pop(idx)
+        # Update listbox
+        refresh_char_listbox()
+        # Redraw image
+        if hasattr(S, 'char_image_path'):
+            img = cv2.imread(S.char_image_path)
+            display_detected_characters(img, S.char_detected_boxes)
+        # Clear zoom
+        char_zoom_canvas.delete('all')
+        zoom_info_label.config(text="Character deleted")
+        S.char_info_label.config(text=f"Deleted '{deleted['label']}'. {len(S.char_detected_boxes)} characters remaining.")
+
+def refresh_char_listbox():
+    """Refresh the character listbox with current detected boxes."""
+    char_listbox.delete(0, tk.END)
+    if hasattr(S, 'char_detected_boxes'):
+        for i, char_info in enumerate(S.char_detected_boxes):
+            label = char_info['label']
+            score = char_info.get('score', 0)
+            x1, y1, x2, y2 = char_info['coords']
+            char_listbox.insert(tk.END, f"{i+1}. '{label}' ({x2-x1}x{y2-y1})")
+
+def on_char_listbox_select(event):
+    """Handle character selection from listbox - show zoom view."""
+    selection = char_listbox.curselection()
+    if not selection:
+        return
+    
+    idx = selection[0]
+    if hasattr(S, 'char_detected_boxes') and idx < len(S.char_detected_boxes):
+        char_info = S.char_detected_boxes[idx]
+        char_edit_var.set(char_info['label'])
+        
+        # Show zoomed view of the character
+        show_char_zoom(char_info)
+        
+        # Highlight on main canvas
+        highlight_char_on_canvas(idx)
+
+def show_char_zoom(char_info):
+    """Display zoomed view of a character in the zoom canvas."""
+    if not hasattr(S, 'char_image_path') or not S.char_image_path:
+        return
+    
+    try:
+        x1, y1, x2, y2 = char_info['coords']
+        label = char_info['label']
+        
+        # Load and crop the character region with some padding
+        pil_img = Image.open(S.char_image_path)
+        pad = 10
+        crop_x1 = max(0, x1 - pad)
+        crop_y1 = max(0, y1 - pad)
+        crop_x2 = min(pil_img.width, x2 + pad)
+        crop_y2 = min(pil_img.height, y2 + pad)
+        
+        char_crop = pil_img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+        
+        # Resize to fit zoom canvas while maintaining aspect ratio
+        canvas_w, canvas_h = 250, 120
+        crop_w, crop_h = char_crop.size
+        scale = min(canvas_w / crop_w, canvas_h / crop_h, 3.0)  # Max 3x zoom
+        new_w, new_h = int(crop_w * scale), int(crop_h * scale)
+        
+        char_resized = char_crop.resize((new_w, new_h), Image.LANCZOS)
+        S.char_zoom_photo = ImageTk.PhotoImage(char_resized)
+        
+        char_zoom_canvas.delete('all')
+        x_off = (canvas_w - new_w) // 2
+        y_off = (canvas_h - new_h) // 2
+        char_zoom_canvas.create_image(x_off, y_off, anchor=tk.NW, image=S.char_zoom_photo)
+        
+        # Draw bounding box contour on zoom view (accounting for padding)
+        box_x1 = x_off + int((x1 - crop_x1) * scale)
+        box_y1 = y_off + int((y1 - crop_y1) * scale)
+        box_x2 = x_off + int((x2 - crop_x1) * scale)
+        box_y2 = y_off + int((y2 - crop_y1) * scale)
+        char_zoom_canvas.create_rectangle(
+            box_x1, box_y1, box_x2, box_y2,
+            outline='red', width=2
+        )
+        
+        zoom_info_label.config(text=f"'{label}' - {x2-x1}x{y2-y1}px")
+        
+    except Exception as e:
+        print(f"Zoom error: {e}")
+
+def highlight_char_on_canvas(idx):
+    """Highlight a specific character on the main canvas."""
+    if not hasattr(S, 'char_detected_boxes') or idx >= len(S.char_detected_boxes):
+        return
+    
+    # Redraw with highlight
+    if hasattr(S, 'char_image_path'):
+        img = cv2.imread(S.char_image_path)
+        display_detected_characters(img, S.char_detected_boxes, highlight_idx=idx)
+
+char_listbox.bind('<<ListboxSelect>>', on_char_listbox_select)
+
+# Buttons frame for update/delete
+char_edit_btn_frame = tk.Frame(list_section, bg=COLORS['bg_section'])
+char_edit_btn_frame.pack(fill=tk.X, pady=(5, 0))
+
+tk.Button(char_edit_btn_frame, text="✏️ Update", command=update_selected_char,
+          bg=COLORS['accent'], fg='white', font=('Segoe UI', 9, 'bold'),
+          padx=8, pady=3, relief=tk.GROOVE).pack(side=tk.LEFT, padx=2)
+
+tk.Button(char_edit_btn_frame, text="🗑️ Delete", command=delete_selected_char,
+          bg='#dc3545', fg='white', font=('Segoe UI', 9, 'bold'),
+          padx=8, pady=3, relief=tk.GROOVE).pack(side=tk.LEFT, padx=2)
 
 char_info_label = tk.Label(char_detect_container, text="",
                            font=('Segoe UI', 10), bg=COLORS['bg_dark'], fg=COLORS['text_light'])
@@ -1306,6 +1651,7 @@ S.btn_back_char_view = btn_back_char_view
 
 # Bounding box drawing on char canvas
 char_drag_state = {'rect': None, 'start': None}
+char_pan_state = {'dragging': False, 'start_x': 0, 'start_y': 0}
 
 def char_canvas_to_image_coords(canvas_x, canvas_y):
     """Convert canvas coordinates to image coordinates."""
@@ -1318,17 +1664,104 @@ def char_canvas_to_image_coords(canvas_x, canvas_y):
     return img_x, img_y
 
 def on_char_canvas_press(event):
-    if not char_draw_mode.get():
+    # Handle pan mode first
+    if char_pan_mode.get():
+        char_pan_state['dragging'] = True
+        char_pan_state['start_x'] = event.x
+        char_pan_state['start_y'] = event.y
         return
+    
+    if not char_draw_mode.get():
+        # Click to select character when not in draw mode
+        img_x, img_y = char_canvas_to_image_coords(event.x, event.y)
+        
+        # Find which character was clicked
+        if hasattr(S, 'char_detected_boxes'):
+            for i, char_info in enumerate(S.char_detected_boxes):
+                x1, y1, x2, y2 = char_info['coords']
+                if x1 <= img_x <= x2 and y1 <= img_y <= y2:
+                    # Select this character in listbox
+                    char_listbox.selection_clear(0, tk.END)
+                    char_listbox.selection_set(i)
+                    char_listbox.see(i)
+                    # Trigger selection event
+                    on_char_listbox_select(None)
+                    break
+        return
+    
     char_drag_state['start'] = (event.x, event.y)
     char_drag_state['rect'] = char_canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='red', width=2)
 
 def on_char_canvas_drag(event):
+    # Handle pan mode
+    if char_pan_mode.get() and char_pan_state['dragging']:
+        dx = event.x - char_pan_state['start_x']
+        dy = event.y - char_pan_state['start_y']
+        char_pan_offset['x'] += dx
+        char_pan_offset['y'] += dy
+        char_pan_state['start_x'] = event.x
+        char_pan_state['start_y'] = event.y
+        update_char_canvas_zoom()
+        return
+    
     if not char_draw_mode.get() or not char_drag_state['rect']:
         return
     char_canvas.coords(char_drag_state['rect'], char_drag_state['start'][0], char_drag_state['start'][1], event.x, event.y)
+    
+    # Show live preview in zoom view while drawing
+    try:
+        x1d, y1d = char_drag_state['start']
+        x2d, y2d = event.x, event.y
+        
+        # Convert to image coordinates
+        ix1, iy1 = char_canvas_to_image_coords(x1d, y1d)
+        ix2, iy2 = char_canvas_to_image_coords(x2d, y2d)
+        x1i, y1i = min(ix1, ix2), min(iy1, iy2)
+        x2i, y2i = max(ix1, ix2), max(iy1, iy2)
+        
+        # Only update if box is big enough
+        if x2i - x1i > 3 and y2i - y1i > 3 and hasattr(S, 'char_image_path') and S.char_image_path:
+            pil_img = Image.open(S.char_image_path)
+            
+            # Clamp to image bounds
+            x1i = max(0, x1i)
+            y1i = max(0, y1i)
+            x2i = min(pil_img.width, x2i)
+            y2i = min(pil_img.height, y2i)
+            
+            char_crop = pil_img.crop((x1i, y1i, x2i, y2i))
+            
+            # Resize to fit zoom canvas
+            canvas_w, canvas_h = 250, 120
+            crop_w, crop_h = char_crop.size
+            if crop_w > 0 and crop_h > 0:
+                scale = min(canvas_w / crop_w, canvas_h / crop_h, 3.0)
+                new_w, new_h = int(crop_w * scale), int(crop_h * scale)
+                
+                char_resized = char_crop.resize((new_w, new_h), Image.LANCZOS)
+                S.char_zoom_photo = ImageTk.PhotoImage(char_resized)
+                
+                char_zoom_canvas.delete('all')
+                x_off = (canvas_w - new_w) // 2
+                y_off = (canvas_h - new_h) // 2
+                char_zoom_canvas.create_image(x_off, y_off, anchor=tk.NW, image=S.char_zoom_photo)
+                
+                # Draw bounding box contour on zoom view
+                char_zoom_canvas.create_rectangle(
+                    x_off, y_off, x_off + new_w, y_off + new_h,
+                    outline='red', width=2
+                )
+                
+                zoom_info_label.config(text=f"Drawing: {x2i-x1i}x{y2i-y1i}px")
+    except Exception as e:
+        pass  # Ignore errors during live preview
 
 def on_char_canvas_release(event):
+    # Handle pan mode release
+    if char_pan_mode.get():
+        char_pan_state['dragging'] = False
+        return
+    
     if not char_draw_mode.get() or not char_drag_state['rect']:
         return
     
@@ -1386,6 +1819,9 @@ def on_char_canvas_release(event):
         img = cv2.imread(S.char_image_path)
         display_detected_characters(img, S.char_detected_boxes)
         
+        # Refresh listbox
+        refresh_char_listbox()
+        
         S.char_info_label.config(text=f"Template '{label}' saved! {len(S.char_detected_boxes)} characters total. Click Re-match to find more.")
         
         from tkinter import messagebox
@@ -1404,6 +1840,13 @@ S.char_detect_container = char_detect_container
 S.char_detect_canvas = char_canvas
 S.char_info_label = char_info_label
 S.char_threshold_var = char_threshold_var
+S.char_zoom_canvas = char_zoom_canvas
+S.char_listbox = char_listbox
+S.refresh_char_listbox = refresh_char_listbox
+S.show_char_zoom = show_char_zoom
+S.char_zoom_level = char_zoom_level
+S.char_pan_offset = char_pan_offset
+S.char_pan_mode = char_pan_mode
 
 # ============================================
 # CONTAINER 3: Annotation Interface (hidden until annotation)
