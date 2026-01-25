@@ -103,3 +103,8 @@ update_status = None
 # Show progress callback
 show_progress = None
 reset_progress = None
+
+# Home panel reference
+home_panel = None
+btn_home = None
+toggle_home_panel = None

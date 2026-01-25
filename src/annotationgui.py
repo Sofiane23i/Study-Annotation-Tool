@@ -20,6 +20,9 @@ from actions.annotate import annotate
 from actions.generate_htr import generate_htr
 from actions.line_annotate import detect_text_lines
 
+# Home panel for corpus statistics
+from home_panel import HomePanel, create_home_button
+
 import shutil
 import glob
 
@@ -162,7 +165,66 @@ tk.Label(title_frame, text="Handwriting Analysis Suite", font=('Segoe UI', 9),
 # Separator
 tk.Frame(fr_buttons, height=2, bg=COLORS['border']).pack(fill=tk.X, pady=10)
 
+# ============================================
+# HOME DASHBOARD BUTTON
+# ============================================
+home_section = tk.Frame(fr_buttons, bg=COLORS['bg_panel'])
+home_section.pack(fill=tk.X, pady=(0, 10))
+
+# Home panel instance (will be created later after content_frame exists)
+home_panel_instance = None
+
+def toggle_home_panel():
+    """Toggle the home dashboard panel visibility."""
+    global home_panel_instance
+    
+    if home_panel_instance is None:
+        return
+    
+    # Check if home panel is currently visible
+    if home_panel_instance.container.winfo_manager():
+        # Hide home panel, show previous view
+        home_panel_instance.hide()
+        btn_home.config(text="🏠 Home Dashboard", bg=COLORS['accent'])
+        # Show the appropriate container based on mode
+        if input_mode_var.get() == 'generate':
+            if widget_exists(S.generate_htr_container):
+                S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+        else:
+            if widget_exists(S.load_image_container):
+                S.load_image_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        # Hide all containers, show home panel
+        for container in [S.load_image_container, S.generate_htr_container, 
+                         S.word_detect_container, S.line_detect_container,
+                         S.char_detect_container, S.annotation_container]:
+            if widget_exists(container):
+                container.pack_forget()
+        
+        home_panel_instance.show()
+        btn_home.config(text="✖ Close Dashboard", bg=COLORS['danger'])
+
+def close_home_panel():
+    """Callback when home panel is closed."""
+    btn_home.config(text="🏠 Home Dashboard", bg=COLORS['accent'])
+    # Show the appropriate container based on mode
+    if input_mode_var.get() == 'generate':
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        if widget_exists(S.load_image_container):
+            S.load_image_container.pack(expand=True, fill=tk.BOTH)
+
+btn_home = create_home_button(home_section, COLORS, toggle_home_panel)
+btn_home.pack(fill=tk.X, padx=5)
+
+# Store in state
+S.btn_home = btn_home
+S.toggle_home_panel = toggle_home_panel
+
+# ============================================
 # Section 1: Input Mode Toggle
+# ============================================
 section1 = tk.LabelFrame(fr_buttons, text=" 📂 Input Mode ", font=('Segoe UI', 10, 'bold'),
                          bg=COLORS['bg_section'], fg=COLORS['text_light'], 
                          relief=tk.FLAT, bd=1, padx=10, pady=10)
@@ -1039,10 +1101,22 @@ content_frame = tk.Frame(txt_edit, bg=COLORS['bg_dark'], padx=20, pady=20)
 content_frame.pack(expand=True, fill=tk.BOTH)
 
 # ============================================
+# HOME PANEL INITIALIZATION
+# ============================================
+# Initialize home panel now that content_frame exists
+home_panel_instance = HomePanel(content_frame, COLORS, close_home_panel)
+S.home_panel = home_panel_instance
+
+# Show home panel by default at startup
+home_panel_instance.show()
+btn_home.config(text="✖ Close Dashboard", bg=COLORS['danger'])
+
+# ============================================
 # CONTAINER 1: Load Image Interface
 # ============================================
 load_image_container = tk.Frame(content_frame, bg=COLORS['bg_dark'])
-load_image_container.pack(expand=True, fill=tk.BOTH)
+# Don't pack at startup - home panel is shown first
+# load_image_container.pack(expand=True, fill=tk.BOTH)
 
 # ============================================
 # CONTAINER 2: Word Detection Review (hidden until word detect)
