@@ -183,27 +183,58 @@ def save_file():
         for f in files:
             os.remove(f)
         for ii in boxes:
-            box = (ii[0], ii[1], ii[2], ii[3])
-            crop = immg.crop(box)
-            S.nbr = S.nbr + 1
-            crop.save(S.directoryout + '/%s.png' % (S.nbr - 1), 'png')
+            if len(ii) == 4:
+                # Check if format is (x, y, w, h) or (xmin, ymin, xmax, ymax)
+                if ii[2] < img_width // 2 and ii[3] < img_height // 2:
+                    # Likely (x, y, w, h) format
+                    box = (ii[0], ii[1], ii[0] + ii[2], ii[1] + ii[3])
+                else:
+                    # Likely (xmin, ymin, xmax, ymax) format
+                    box = (ii[0], ii[1], ii[2], ii[3])
+                crop = immg.crop(box)
+                S.nbr = S.nbr + 1
+                crop.save(S.directoryout + '/%s.png' % (S.nbr - 1), 'png')
         if hasattr(S, 'show_progress'):
             S.show_progress(90, f"Cropped {len(boxes)} words")
 
-    # Render detection result in the main word-detection panel if available
-    if hasattr(S, 'word_detect_canvas') and S.word_detect_canvas:
-        canvas = S.word_detect_canvas
-        canvas.delete('all')
-        display = PIL_image.resize((800, 600))
-        photo = ImageTk.PhotoImage(display)
-        canvas.photo = photo
-        canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-        S.word_detect_photo = photo
-
-    # Expose data and crop helper for the main UI buttons
+    # Convert bboxes to (x, y, w, h) format for the new interface
+    word_bboxes = []
+    for bbox in S.finalrowsbbx:
+        xmin, ymin, xmax, ymax = bbox
+        word_bboxes.append((xmin, ymin, xmax - xmin, ymax - ymin))
+    
+    S.word_bboxes = word_bboxes
     S.word_detect_boxes = S.finalrowsbbx[:]
+
+    # Use the new display function if available (stored in state to avoid circular import)
+    if hasattr(S, 'word_detect_canvas') and S.word_detect_canvas:
+        # Store the original image (BGR) for the display function
+        import cv2
+        S.word_display_img = cv2.cvtColor(np.array(immg), cv2.COLOR_RGB2BGR)
+        
+        # Call the display function from state (set by annotationgui.py)
+        if hasattr(S, 'display_word_bboxes_func') and S.display_word_bboxes_func:
+            S.display_word_bboxes_func(S.word_display_img, S.word_bboxes)
+        else:
+            # Fallback to old display method
+            canvas = S.word_detect_canvas
+            canvas.delete('all')
+            display = PIL_image.resize((600, 450))
+            photo = ImageTk.PhotoImage(display)
+            canvas.photo = photo
+            canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+            S.word_detect_photo = photo
+
     S.word_detect_image = PIL_image
-    S.perform_cropping_current_detection = lambda: perform_cropping(S.word_detect_boxes)
+    
+    def perform_cropping_from_bboxes():
+        # Convert current word_bboxes back to xmin,ymin,xmax,ymax format
+        boxes = []
+        for (x, y, w, h) in S.word_bboxes:
+            boxes.append([x, y, x + w, y + h])
+        perform_cropping(boxes)
+    
+    S.perform_cropping_current_detection = perform_cropping_from_bboxes
 
     files = glob.glob(S.directorytmp + '/*')
     for f in files:

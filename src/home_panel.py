@@ -266,7 +266,7 @@ class HomePanel:
         list_scroll = tk.Scrollbar(list_container)
         list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.preview_listbox = tk.Listbox(list_container, font=('Consolas', 10),
+        self.preview_listbox = tk.Listbox(list_container, font=('Segoe UI', 10),
                                           bg='white', fg=self.colors['text_light'],
                                           selectbackground=self.colors['accent'],
                                           selectforeground='white',
@@ -326,7 +326,7 @@ class HomePanel:
                                       bg=self.colors['bg_section'], fg=self.colors['text_light'])
         details_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
         
-        self.preview_details_text = tk.Text(details_frame, font=('Consolas', 10),
+        self.preview_details_text = tk.Text(details_frame, font=('Segoe UI', 10),
                                             bg='white', fg=self.colors['text_light'],
                                             height=4, wrap=tk.WORD)
         self.preview_details_text.pack(fill=tk.X, padx=5, pady=5)
@@ -679,7 +679,7 @@ class HomePanel:
                                      bg=self.colors['bg_section'], fg=self.colors['text_light'])
         paned.add(bigram_frame, width=350)
         
-        self.bigram_list = tk.Listbox(bigram_frame, font=('Consolas', 10),
+        self.bigram_list = tk.Listbox(bigram_frame, font=('Segoe UI', 10),
                                       bg='white', fg=self.colors['text_light'],
                                       selectbackground=self.colors['accent'])
         self.bigram_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -690,7 +690,7 @@ class HomePanel:
                                       bg=self.colors['bg_section'], fg=self.colors['text_light'])
         paned.add(trigram_frame, width=350)
         
-        self.trigram_list = tk.Listbox(trigram_frame, font=('Consolas', 10),
+        self.trigram_list = tk.Listbox(trigram_frame, font=('Segoe UI', 10),
                                        bg='white', fg=self.colors['text_light'],
                                        selectbackground=self.colors['accent'])
         self.trigram_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -938,7 +938,7 @@ Select an annotation folder to get personalized recommendations for:
             if len(alphabet) > 100:
                 alphabet_text += f" ... (+{len(alphabet) - 100} more)"
             tk.Label(alphabet_frame, text=alphabet_text,
-                    font=('Consolas', 11), bg=self.colors['bg_section'], 
+                    font=('Segoe UI', 11), bg=self.colors['bg_section'], 
                     fg=self.colors['text_light'], wraplength=600).pack(padx=10, pady=10)
         
     def _create_stat_card(self, parent, title: str, value: str, color: str):

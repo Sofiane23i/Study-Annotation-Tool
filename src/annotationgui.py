@@ -2,6 +2,7 @@ from http.client import OK
 import os
 import tkinter as tk
 from tkinter import *
+from tkinter import messagebox
 from tkinter.filedialog import askopenfilename, asksaveasfilename
 from PIL import Image, ImageTk
 import argparse
@@ -656,10 +657,13 @@ def detect_lines_with_autofill():
         import traceback
         traceback.print_exc()
 
-def display_detected_lines(img, lines):
+def display_detected_lines(img, lines, highlight_idx=None):
     """Display image with detected lines on the line detection canvas."""
     if not hasattr(S, 'line_detect_canvas'):
         return
+    
+    # Store image for redrawing
+    S.line_display_img = img
     
     canvas = S.line_detect_canvas
     canvas.delete('all')
@@ -670,13 +674,19 @@ def display_detected_lines(img, lines):
     
     # Draw rectangles around detected lines
     for i, (y_start, y_end) in enumerate(lines):
-        cv2.rectangle(img_with_lines, (0, y_start), (img.shape[1], y_end), (30, 144, 255), 2)
+        if i == highlight_idx:
+            color = (0, 255, 0)  # Green for selected
+            thickness = 3
+        else:
+            color = (30, 144, 255)
+            thickness = 2
+        cv2.rectangle(img_with_lines, (0, y_start), (img.shape[1], y_end), color, thickness)
         cv2.putText(img_with_lines, f"Line {i+1}", (5, y_start + 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (30, 144, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     
     # Resize for display
     h, w = img_with_lines.shape[:2]
-    canvas_w, canvas_h = 800, 600
+    canvas_w, canvas_h = 600, 450
     scale = min(canvas_w / w, canvas_h / h, 1.0)
     new_w, new_h = int(w * scale), int(h * scale)
     
@@ -689,9 +699,82 @@ def display_detected_lines(img, lines):
     y_offset = (canvas_h - new_h) // 2
     canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=S.line_detect_photo)
     
+    # Store scale and offset for coordinate conversion
+    S.line_canvas_scale = scale
+    S.line_canvas_offset = (x_offset, y_offset)
+    
     # Update info label
     if hasattr(S, 'line_info_label'):
-        S.line_info_label.config(text=f"Detected {len(lines)} lines - Click 'Proceed to Annotation' to annotate each line")
+        S.line_info_label.config(text=f"Detected {len(lines)} lines - Edit or add manually below")
+    
+    # Refresh listbox
+    if hasattr(S, 'refresh_line_bbox_list'):
+        S.refresh_line_bbox_list()
+
+def redraw_line_detection(highlight_idx=None):
+    """Redraw line detection with current detected_lines."""
+    if hasattr(S, 'line_display_img') and hasattr(S, 'detected_lines'):
+        display_detected_lines(S.line_display_img, S.detected_lines, highlight_idx)
+
+def redraw_word_detection(highlight_idx=None):
+    """Redraw word detection with current word_bboxes."""
+    if hasattr(S, 'word_display_img') and hasattr(S, 'word_bboxes'):
+        display_word_bboxes(S.word_display_img, S.word_bboxes, highlight_idx)
+
+def display_word_bboxes(img, bboxes, highlight_idx=None):
+    """Display image with word bounding boxes."""
+    if not hasattr(S, 'word_detect_canvas'):
+        return
+    
+    # Store image for redrawing
+    S.word_display_img = img
+    
+    canvas = S.word_detect_canvas
+    canvas.delete('all')
+    
+    # Draw image with word boxes
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_with_words = img_rgb.copy()
+    
+    # Draw rectangles around detected words
+    for i, (x, y, w, h) in enumerate(bboxes):
+        # Ensure coordinates are integers for OpenCV
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        if i == highlight_idx:
+            color = (0, 255, 0)  # Green for selected
+            thickness = 3
+        else:
+            color = (255, 100, 100)
+            thickness = 2
+        cv2.rectangle(img_with_words, (x, y), (x + w, y + h), color, thickness)
+        cv2.putText(img_with_words, f"{i+1}", (x + 2, y + 15), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    
+    # Resize for display
+    img_h, img_w = img_with_words.shape[:2]
+    canvas_w, canvas_h = 600, 450
+    scale = min(canvas_w / img_w, canvas_h / img_h, 1.0)
+    new_w, new_h = int(img_w * scale), int(img_h * scale)
+    
+    img_resized = cv2.resize(img_with_words, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    pil_img = Image.fromarray(img_resized)
+    S.word_detect_photo = ImageTk.PhotoImage(pil_img)
+    
+    # Center on canvas
+    x_offset = (canvas_w - new_w) // 2
+    y_offset = (canvas_h - new_h) // 2
+    canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=S.word_detect_photo)
+    
+    # Store scale and offset for coordinate conversion
+    S.word_canvas_scale = scale
+    S.word_canvas_offset = (x_offset, y_offset)
+    
+    # Refresh listbox
+    if hasattr(S, 'refresh_word_bbox_list'):
+        S.refresh_word_bbox_list()
+
+# Store the display function in state for use by save_file.py (avoids circular import)
+S.display_word_bboxes_func = display_word_bboxes
 
 # Section 2: Detection
 section2 = tk.LabelFrame(fr_buttons, text=" 🔍 Detection ", font=('Segoe UI', 10, 'bold'),
@@ -1128,11 +1211,215 @@ word_detect_header = tk.Label(word_detect_container, text=" 🧠 Word Detection 
                               font=('Segoe UI', 12, 'bold'),
                               bg=COLORS['bg_section'], fg=COLORS['text_light'],
                               relief=tk.FLAT, bd=1, padx=10, pady=8)
-word_detect_header.pack(fill=tk.X, pady=(0, 10))
+word_detect_header.pack(fill=tk.X, pady=(0, 5))
 
-word_canvas = tk.Canvas(word_detect_container, width=800, height=600,
+# Main frame with left (canvas) and right (bbox list) panels
+word_main_frame = tk.Frame(word_detect_container, bg=COLORS['bg_dark'])
+word_main_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+# Left panel: canvas for image display
+word_left_panel = tk.Frame(word_main_frame, bg=COLORS['bg_dark'])
+word_left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+word_canvas = tk.Canvas(word_left_panel, width=600, height=450,
                         bg='#eef2f7', highlightthickness=1, highlightbackground=COLORS['border'])
-word_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+word_canvas.pack(fill=tk.BOTH, expand=True)
+
+# Right panel: bounding box list
+word_right_panel = tk.Frame(word_main_frame, bg=COLORS['bg_section'], width=280)
+word_right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+word_right_panel.pack_propagate(False)
+
+tk.Label(word_right_panel, text="📋 Detected Bounding Boxes",
+         font=('Segoe UI', 10, 'bold'), bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(fill=tk.X, pady=5)
+
+# Listbox for word bboxes
+word_bbox_list_frame = tk.Frame(word_right_panel, bg=COLORS['bg_section'])
+word_bbox_list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+word_bbox_scroll = tk.Scrollbar(word_bbox_list_frame)
+word_bbox_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+word_bbox_listbox = tk.Listbox(word_bbox_list_frame, font=('Segoe UI', 9),
+                               bg='white', fg=COLORS['text_light'],
+                               selectbackground=COLORS['accent'], selectforeground='white',
+                               yscrollcommand=word_bbox_scroll.set, height=12)
+word_bbox_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+word_bbox_scroll.config(command=word_bbox_listbox.yview)
+
+# Edit controls for word bbox
+word_edit_frame = tk.Frame(word_right_panel, bg=COLORS['bg_section'])
+word_edit_frame.pack(fill=tk.X, padx=5, pady=5)
+
+tk.Label(word_edit_frame, text="Edit Selected BBox:", font=('Segoe UI', 9, 'bold'),
+         bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(anchor='w')
+
+word_coord_frame = tk.Frame(word_edit_frame, bg=COLORS['bg_section'])
+word_coord_frame.pack(fill=tk.X, pady=3)
+
+tk.Label(word_coord_frame, text="X:", bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+word_x_var = tk.StringVar()
+word_x_entry = tk.Entry(word_coord_frame, textvariable=word_x_var, width=5, font=('Segoe UI', 9))
+word_x_entry.pack(side=tk.LEFT, padx=2)
+
+tk.Label(word_coord_frame, text="Y:", bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+word_y_var = tk.StringVar()
+word_y_entry = tk.Entry(word_coord_frame, textvariable=word_y_var, width=5, font=('Segoe UI', 9))
+word_y_entry.pack(side=tk.LEFT, padx=2)
+
+tk.Label(word_coord_frame, text="W:", bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+word_w_var = tk.StringVar()
+word_w_entry = tk.Entry(word_coord_frame, textvariable=word_w_var, width=5, font=('Segoe UI', 9))
+word_w_entry.pack(side=tk.LEFT, padx=2)
+
+tk.Label(word_coord_frame, text="H:", bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+word_h_var = tk.StringVar()
+word_h_entry = tk.Entry(word_coord_frame, textvariable=word_h_var, width=5, font=('Segoe UI', 9))
+word_h_entry.pack(side=tk.LEFT, padx=2)
+
+word_bbox_btn_frame = tk.Frame(word_edit_frame, bg=COLORS['bg_section'])
+word_bbox_btn_frame.pack(fill=tk.X, pady=3)
+
+def update_word_bbox():
+    """Update selected word bbox coordinates."""
+    sel = word_bbox_listbox.curselection()
+    if not sel or not hasattr(S, 'word_bboxes'):
+        return
+    idx = sel[0]
+    try:
+        x, y, w, h = int(word_x_var.get()), int(word_y_var.get()), int(word_w_var.get()), int(word_h_var.get())
+        S.word_bboxes[idx] = (x, y, w, h)
+        refresh_word_bbox_list()
+        redraw_word_detection()
+    except ValueError:
+        messagebox.showerror("Error", "Please enter valid integer coordinates.")
+
+def delete_word_bbox():
+    """Delete selected word bbox."""
+    sel = word_bbox_listbox.curselection()
+    if not sel or not hasattr(S, 'word_bboxes'):
+        return
+    idx = sel[0]
+    if messagebox.askyesno("Delete", f"Delete bounding box #{idx+1}?"):
+        S.word_bboxes.pop(idx)
+        refresh_word_bbox_list()
+        redraw_word_detection()
+
+tk.Button(word_bbox_btn_frame, text="✏️ Update", command=update_word_bbox,
+          bg=COLORS['accent'], fg='white', font=('Segoe UI', 9), padx=8).pack(side=tk.LEFT, padx=2)
+tk.Button(word_bbox_btn_frame, text="🗑️ Delete", command=delete_word_bbox,
+          bg='#dc3545', fg='white', font=('Segoe UI', 9), padx=8).pack(side=tk.LEFT, padx=2)
+
+def on_word_bbox_select(event):
+    """Handle word bbox selection."""
+    sel = word_bbox_listbox.curselection()
+    if not sel or not hasattr(S, 'word_bboxes'):
+        return
+    idx = sel[0]
+    x, y, w, h = S.word_bboxes[idx]
+    word_x_var.set(str(x))
+    word_y_var.set(str(y))
+    word_w_var.set(str(w))
+    word_h_var.set(str(h))
+    redraw_word_detection(highlight_idx=idx)
+
+word_bbox_listbox.bind('<<ListboxSelect>>', on_word_bbox_select)
+
+def refresh_word_bbox_list():
+    """Refresh the word bbox listbox."""
+    word_bbox_listbox.delete(0, tk.END)
+    if hasattr(S, 'word_bboxes'):
+        for i, (x, y, w, h) in enumerate(S.word_bboxes):
+            word_bbox_listbox.insert(tk.END, f"#{i+1}: ({x}, {y}, {w}×{h})")
+
+# Manual annotation section at bottom
+word_manual_frame = tk.LabelFrame(word_detect_container, text=" ✏️ Manual Annotation ",
+                                   font=('Segoe UI', 10, 'bold'),
+                                   bg=COLORS['bg_section'], fg=COLORS['text_light'])
+word_manual_frame.pack(fill=tk.X, padx=4, pady=5)
+
+word_manual_inner = tk.Frame(word_manual_frame, bg=COLORS['bg_section'])
+word_manual_inner.pack(fill=tk.X, padx=10, pady=8)
+
+tk.Label(word_manual_inner, text="Add bbox manually (x, y, w, h):", 
+         font=('Segoe UI', 9), bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+
+word_manual_x = tk.Entry(word_manual_inner, width=5, font=('Segoe UI', 9))
+word_manual_x.pack(side=tk.LEFT, padx=2)
+word_manual_y = tk.Entry(word_manual_inner, width=5, font=('Segoe UI', 9))
+word_manual_y.pack(side=tk.LEFT, padx=2)
+word_manual_w = tk.Entry(word_manual_inner, width=5, font=('Segoe UI', 9))
+word_manual_w.pack(side=tk.LEFT, padx=2)
+word_manual_h = tk.Entry(word_manual_inner, width=5, font=('Segoe UI', 9))
+word_manual_h.pack(side=tk.LEFT, padx=2)
+
+def add_word_bbox_manual():
+    """Add a manual word bbox."""
+    try:
+        x = int(word_manual_x.get())
+        y = int(word_manual_y.get())
+        w = int(word_manual_w.get())
+        h = int(word_manual_h.get())
+        if not hasattr(S, 'word_bboxes'):
+            S.word_bboxes = []
+        S.word_bboxes.append((x, y, w, h))
+        refresh_word_bbox_list()
+        redraw_word_detection()
+        word_manual_x.delete(0, tk.END)
+        word_manual_y.delete(0, tk.END)
+        word_manual_w.delete(0, tk.END)
+        word_manual_h.delete(0, tk.END)
+    except ValueError:
+        messagebox.showerror("Error", "Please enter valid integer coordinates.")
+
+tk.Button(word_manual_inner, text="➕ Add BBox", command=add_word_bbox_manual,
+          bg=COLORS['success'], fg='white', font=('Segoe UI', 9, 'bold'), padx=10).pack(side=tk.LEFT, padx=10)
+
+tk.Label(word_manual_inner, text="Or draw on canvas with mouse", 
+         font=('Segoe UI', 8), bg=COLORS['bg_section'], fg=COLORS['text_muted']).pack(side=tk.LEFT, padx=10)
+
+# Mouse drawing on word canvas
+word_draw_state = {'start': None, 'rect': None}
+
+def on_word_canvas_press(event):
+    word_draw_state['start'] = (event.x, event.y)
+    word_draw_state['rect'] = word_canvas.create_rectangle(event.x, event.y, event.x, event.y, 
+                                                            outline='blue', width=2, dash=(4, 2))
+
+def on_word_canvas_drag(event):
+    if word_draw_state['rect']:
+        word_canvas.coords(word_draw_state['rect'], 
+                          word_draw_state['start'][0], word_draw_state['start'][1], 
+                          event.x, event.y)
+
+def on_word_canvas_release(event):
+    if not word_draw_state['rect'] or not word_draw_state['start']:
+        return
+    word_canvas.delete(word_draw_state['rect'])
+    x1, y1 = word_draw_state['start']
+    x2, y2 = event.x, event.y
+    word_draw_state['start'] = None
+    word_draw_state['rect'] = None
+    
+    # Convert canvas coords to image coords
+    if hasattr(S, 'word_canvas_scale') and hasattr(S, 'word_canvas_offset'):
+        scale = S.word_canvas_scale
+        ox, oy = S.word_canvas_offset
+        ix1 = int((min(x1, x2) - ox) / scale)
+        iy1 = int((min(y1, y2) - oy) / scale)
+        ix2 = int((max(x1, x2) - ox) / scale)
+        iy2 = int((max(y1, y2) - oy) / scale)
+        w, h = ix2 - ix1, iy2 - iy1
+        if w > 5 and h > 5:
+            if not hasattr(S, 'word_bboxes'):
+                S.word_bboxes = []
+            S.word_bboxes.append((ix1, iy1, w, h))
+            refresh_word_bbox_list()
+            redraw_word_detection()
+
+word_canvas.bind('<ButtonPress-1>', on_word_canvas_press)
+word_canvas.bind('<B1-Motion>', on_word_canvas_drag)
+word_canvas.bind('<ButtonRelease-1>', on_word_canvas_release)
 
 word_btn_frame = tk.Frame(word_detect_container, bg=COLORS['bg_dark'])
 word_btn_frame.pack(fill=tk.X, pady=(8, 0))
@@ -1187,6 +1474,8 @@ btn_proceed_annotation.pack(side=tk.RIGHT, padx=4)
 S.word_detect_container = word_detect_container
 S.word_detect_canvas = word_canvas
 S.btn_back_view = btn_back_view
+S.word_bbox_listbox = word_bbox_listbox
+S.refresh_word_bbox_list = refresh_word_bbox_list
 
 # ============================================
 # CONTAINER 2b: Line Detection Review (hidden until line detect)
@@ -1198,15 +1487,201 @@ line_detect_header = tk.Label(line_detect_container, text=" 📄 Line Detection 
                               font=('Segoe UI', 12, 'bold'),
                               bg=COLORS['bg_section'], fg=COLORS['text_light'],
                               relief=tk.FLAT, bd=1, padx=10, pady=8)
-line_detect_header.pack(fill=tk.X, pady=(0, 10))
+line_detect_header.pack(fill=tk.X, pady=(0, 5))
 
-line_canvas = tk.Canvas(line_detect_container, width=800, height=600,
+# Main frame with left (canvas) and right (bbox list) panels
+line_main_frame = tk.Frame(line_detect_container, bg=COLORS['bg_dark'])
+line_main_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+# Left panel: canvas for image display
+line_left_panel = tk.Frame(line_main_frame, bg=COLORS['bg_dark'])
+line_left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+line_canvas = tk.Canvas(line_left_panel, width=600, height=450,
                         bg='#eef2f7', highlightthickness=1, highlightbackground=COLORS['border'])
-line_canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+line_canvas.pack(fill=tk.BOTH, expand=True)
 
-line_info_label = tk.Label(line_detect_container, text="",
-                           font=('Segoe UI', 10), bg=COLORS['bg_dark'], fg=COLORS['text_light'])
-line_info_label.pack(fill=tk.X, pady=(4, 0))
+# Right panel: bounding box list
+line_right_panel = tk.Frame(line_main_frame, bg=COLORS['bg_section'], width=280)
+line_right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+line_right_panel.pack_propagate(False)
+
+tk.Label(line_right_panel, text="📋 Detected Lines",
+         font=('Segoe UI', 10, 'bold'), bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(fill=tk.X, pady=5)
+
+# Listbox for line bboxes
+line_bbox_list_frame = tk.Frame(line_right_panel, bg=COLORS['bg_section'])
+line_bbox_list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+line_bbox_scroll = tk.Scrollbar(line_bbox_list_frame)
+line_bbox_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+line_bbox_listbox = tk.Listbox(line_bbox_list_frame, font=('Segoe UI', 9),
+                               bg='white', fg=COLORS['text_light'],
+                               selectbackground=COLORS['accent'], selectforeground='white',
+                               yscrollcommand=line_bbox_scroll.set, height=12)
+line_bbox_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+line_bbox_scroll.config(command=line_bbox_listbox.yview)
+
+# Edit controls for line bbox
+line_edit_frame = tk.Frame(line_right_panel, bg=COLORS['bg_section'])
+line_edit_frame.pack(fill=tk.X, padx=5, pady=5)
+
+tk.Label(line_edit_frame, text="Edit Selected Line:", font=('Segoe UI', 9, 'bold'),
+         bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(anchor='w')
+
+line_coord_frame = tk.Frame(line_edit_frame, bg=COLORS['bg_section'])
+line_coord_frame.pack(fill=tk.X, pady=3)
+
+tk.Label(line_coord_frame, text="Y Start:", bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+line_y1_var = tk.StringVar()
+line_y1_entry = tk.Entry(line_coord_frame, textvariable=line_y1_var, width=6, font=('Segoe UI', 9))
+line_y1_entry.pack(side=tk.LEFT, padx=2)
+
+tk.Label(line_coord_frame, text="Y End:", bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+line_y2_var = tk.StringVar()
+line_y2_entry = tk.Entry(line_coord_frame, textvariable=line_y2_var, width=6, font=('Segoe UI', 9))
+line_y2_entry.pack(side=tk.LEFT, padx=2)
+
+line_bbox_btn_frame = tk.Frame(line_edit_frame, bg=COLORS['bg_section'])
+line_bbox_btn_frame.pack(fill=tk.X, pady=3)
+
+def update_line_bbox():
+    """Update selected line bbox coordinates."""
+    sel = line_bbox_listbox.curselection()
+    if not sel or not hasattr(S, 'detected_lines'):
+        return
+    idx = sel[0]
+    try:
+        y1, y2 = int(line_y1_var.get()), int(line_y2_var.get())
+        S.detected_lines[idx] = (y1, y2)
+        refresh_line_bbox_list()
+        redraw_line_detection()
+    except ValueError:
+        messagebox.showerror("Error", "Please enter valid integer coordinates.")
+
+def delete_line_bbox():
+    """Delete selected line bbox."""
+    sel = line_bbox_listbox.curselection()
+    if not sel or not hasattr(S, 'detected_lines'):
+        return
+    idx = sel[0]
+    if messagebox.askyesno("Delete", f"Delete line #{idx+1}?"):
+        S.detected_lines.pop(idx)
+        refresh_line_bbox_list()
+        redraw_line_detection()
+
+tk.Button(line_bbox_btn_frame, text="✏️ Update", command=update_line_bbox,
+          bg=COLORS['accent'], fg='white', font=('Segoe UI', 9), padx=8).pack(side=tk.LEFT, padx=2)
+tk.Button(line_bbox_btn_frame, text="🗑️ Delete", command=delete_line_bbox,
+          bg='#dc3545', fg='white', font=('Segoe UI', 9), padx=8).pack(side=tk.LEFT, padx=2)
+
+def on_line_bbox_select(event):
+    """Handle line bbox selection."""
+    sel = line_bbox_listbox.curselection()
+    if not sel or not hasattr(S, 'detected_lines'):
+        return
+    idx = sel[0]
+    y1, y2 = S.detected_lines[idx]
+    line_y1_var.set(str(y1))
+    line_y2_var.set(str(y2))
+    redraw_line_detection(highlight_idx=idx)
+
+line_bbox_listbox.bind('<<ListboxSelect>>', on_line_bbox_select)
+
+def refresh_line_bbox_list():
+    """Refresh the line bbox listbox."""
+    line_bbox_listbox.delete(0, tk.END)
+    if hasattr(S, 'detected_lines'):
+        for i, (y1, y2) in enumerate(S.detected_lines):
+            height = y2 - y1
+            line_bbox_listbox.insert(tk.END, f"Line #{i+1}: Y={y1}→{y2} (h={height})")
+
+line_info_label = tk.Label(line_right_panel, text="",
+                           font=('Segoe UI', 9), bg=COLORS['bg_section'], fg=COLORS['text_light'],
+                           wraplength=250)
+line_info_label.pack(fill=tk.X, pady=5, padx=5)
+
+# Manual annotation section at bottom
+line_manual_frame = tk.LabelFrame(line_detect_container, text=" ✏️ Manual Line Annotation ",
+                                   font=('Segoe UI', 10, 'bold'),
+                                   bg=COLORS['bg_section'], fg=COLORS['text_light'])
+line_manual_frame.pack(fill=tk.X, padx=4, pady=5)
+
+line_manual_inner = tk.Frame(line_manual_frame, bg=COLORS['bg_section'])
+line_manual_inner.pack(fill=tk.X, padx=10, pady=8)
+
+tk.Label(line_manual_inner, text="Add line manually (Y start, Y end):", 
+         font=('Segoe UI', 9), bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT)
+
+line_manual_y1 = tk.Entry(line_manual_inner, width=6, font=('Segoe UI', 9))
+line_manual_y1.pack(side=tk.LEFT, padx=2)
+line_manual_y2 = tk.Entry(line_manual_inner, width=6, font=('Segoe UI', 9))
+line_manual_y2.pack(side=tk.LEFT, padx=2)
+
+def add_line_bbox_manual():
+    """Add a manual line bbox."""
+    try:
+        y1 = int(line_manual_y1.get())
+        y2 = int(line_manual_y2.get())
+        if not hasattr(S, 'detected_lines'):
+            S.detected_lines = []
+        S.detected_lines.append((y1, y2))
+        # Sort lines by y1
+        S.detected_lines.sort(key=lambda x: x[0])
+        refresh_line_bbox_list()
+        redraw_line_detection()
+        line_manual_y1.delete(0, tk.END)
+        line_manual_y2.delete(0, tk.END)
+    except ValueError:
+        messagebox.showerror("Error", "Please enter valid integer coordinates.")
+
+tk.Button(line_manual_inner, text="➕ Add Line", command=add_line_bbox_manual,
+          bg=COLORS['success'], fg='white', font=('Segoe UI', 9, 'bold'), padx=10).pack(side=tk.LEFT, padx=10)
+
+tk.Label(line_manual_inner, text="Or draw horizontal line on canvas with mouse", 
+         font=('Segoe UI', 8), bg=COLORS['bg_section'], fg=COLORS['text_muted']).pack(side=tk.LEFT, padx=10)
+
+# Mouse drawing on line canvas
+line_draw_state = {'start': None, 'rect': None}
+
+def on_line_canvas_press(event):
+    line_draw_state['start'] = (event.x, event.y)
+    line_draw_state['rect'] = line_canvas.create_rectangle(0, event.y, line_canvas.winfo_width(), event.y, 
+                                                            outline='blue', width=2, dash=(4, 2))
+
+def on_line_canvas_drag(event):
+    if line_draw_state['rect']:
+        y1, y2 = line_draw_state['start'][1], event.y
+        line_canvas.coords(line_draw_state['rect'], 
+                          0, min(y1, y2), line_canvas.winfo_width(), max(y1, y2))
+
+def on_line_canvas_release(event):
+    if not line_draw_state['rect'] or not line_draw_state['start']:
+        return
+    line_canvas.delete(line_draw_state['rect'])
+    y1_canvas = line_draw_state['start'][1]
+    y2_canvas = event.y
+    line_draw_state['start'] = None
+    line_draw_state['rect'] = None
+    
+    # Convert canvas coords to image coords
+    if hasattr(S, 'line_canvas_scale') and hasattr(S, 'line_canvas_offset'):
+        scale = S.line_canvas_scale
+        oy = S.line_canvas_offset[1]
+        iy1 = int((min(y1_canvas, y2_canvas) - oy) / scale)
+        iy2 = int((max(y1_canvas, y2_canvas) - oy) / scale)
+        if iy2 - iy1 > 5:
+            if not hasattr(S, 'detected_lines'):
+                S.detected_lines = []
+            S.detected_lines.append((iy1, iy2))
+            S.detected_lines.sort(key=lambda x: x[0])
+            refresh_line_bbox_list()
+            redraw_line_detection()
+
+line_canvas.bind('<ButtonPress-1>', on_line_canvas_press)
+line_canvas.bind('<B1-Motion>', on_line_canvas_drag)
+line_canvas.bind('<ButtonRelease-1>', on_line_canvas_release)
 
 line_btn_frame = tk.Frame(line_detect_container, bg=COLORS['bg_dark'])
 line_btn_frame.pack(fill=tk.X, pady=(8, 0))
@@ -1267,6 +1742,8 @@ S.line_detect_container = line_detect_container
 S.line_detect_canvas = line_canvas
 S.btn_back_line_view = btn_back_line_view
 S.line_info_label = line_info_label
+S.line_bbox_listbox = line_bbox_listbox
+S.refresh_line_bbox_list = refresh_line_bbox_list
 
 # ============================================
 # CONTAINER 2c: Character Detection Review (hidden until char detect)
@@ -1340,6 +1817,8 @@ def update_char_canvas_zoom():
 
 def display_detected_characters_zoomed(img, detected_chars, highlight_idx=None):
     """Display image with zoom and pan support."""
+    from PIL import ImageDraw, ImageFont
+    
     canvas = S.char_detect_canvas
     canvas.delete('all')
     
@@ -1349,10 +1828,9 @@ def display_detected_characters_zoomed(img, detected_chars, highlight_idx=None):
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img_with_chars = img_rgb.copy()
     
-    # Draw rectangles around detected characters
+    # Draw rectangles around detected characters using OpenCV
     for i, char_info in enumerate(detected_chars):
         x1, y1, x2, y2 = char_info['coords']
-        label = char_info['label']
         
         if i == highlight_idx:
             color = (0, 255, 0)
@@ -1362,8 +1840,35 @@ def display_detected_characters_zoomed(img, detected_chars, highlight_idx=None):
             thickness = 2
         
         cv2.rectangle(img_with_chars, (x1, y1), (x2, y2), color, thickness)
-        cv2.putText(img_with_chars, label, (x1, y1 - 5), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    
+    # Convert to PIL for text drawing (supports Arabic/Unicode)
+    pil_img_for_text = Image.fromarray(img_with_chars)
+    draw = ImageDraw.Draw(pil_img_for_text)
+    
+    # Try to load a font that supports Arabic, fall back to default
+    try:
+        font = ImageFont.truetype("segoeui.ttf", 14)
+    except:
+        try:
+            font = ImageFont.truetype("arial.ttf", 14)
+        except:
+            font = ImageFont.load_default()
+    
+    # Draw text labels using PIL
+    for i, char_info in enumerate(detected_chars):
+        x1, y1, x2, y2 = char_info['coords']
+        label = char_info['label']
+        
+        if i == highlight_idx:
+            text_color = (0, 255, 0)
+        else:
+            text_color = (255, 100, 100)
+        
+        # Draw text with background for better visibility
+        text_y = max(0, y1 - 18)
+        draw.text((x1, text_y), label, font=font, fill=text_color)
+    
+    img_with_chars = np.array(pil_img_for_text)
     
     h, w = img_with_chars.shape[:2]
     canvas_w, canvas_h = 600, 500
@@ -1464,7 +1969,7 @@ char_list_frame.pack(fill=tk.BOTH, expand=True)
 char_list_scroll = tk.Scrollbar(char_list_frame)
 char_list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-char_listbox = tk.Listbox(char_list_frame, font=('Consolas', 10), height=12,
+char_listbox = tk.Listbox(char_list_frame, font=('Segoe UI', 10), height=12,
                           yscrollcommand=char_list_scroll.set, selectmode=tk.SINGLE,
                           bg='white', fg=COLORS['text_light'], selectbackground=COLORS['accent'])
 char_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1953,7 +2458,7 @@ load_inner_frame.pack(fill=tk.X)
 # Folder path display
 folder_path_var = tk.StringVar(value="No folder selected")
 folder_path_label = tk.Label(load_inner_frame, textvariable=folder_path_var,
-                             font=('Consolas', 10), bg='white', fg='#333',
+                             font=('Segoe UI', 10), bg='white', fg='#333',
                              anchor='w', padx=10, pady=5, relief=tk.SUNKEN)
 folder_path_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
 
@@ -2001,7 +2506,7 @@ S.input_section = input_section
 text_frame = tk.Frame(input_section, bg=COLORS['bg_section'])
 text_frame.pack(fill=tk.X)
 
-input_text_area = tk.Text(text_frame, width=80, height=6, font=('Consolas', 11),
+input_text_area = tk.Text(text_frame, width=80, height=6, font=('Segoe UI', 11),
                           bg='white', fg='black', insertbackground='black',
                           wrap=tk.WORD)
 input_text_area.pack(side=tk.LEFT, fill=tk.X, expand=True)

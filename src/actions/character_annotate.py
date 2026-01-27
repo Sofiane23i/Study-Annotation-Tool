@@ -147,7 +147,7 @@ def start_embedded_character_annotation(image_path, detected_chars, templates=No
             
             # Coords label
             coords_text = f"[{x1},{y1},{x2-x1}x{y2-y1}]"
-            tk.Label(info_frame, text=coords_text, font=('Consolas', 8), 
+            tk.Label(info_frame, text=coords_text, font=('Segoe UI', 8), 
                      bg='white', fg='#aaa').pack(side=tk.LEFT, padx=5)
             
             # Delete button
@@ -343,7 +343,7 @@ def character_annotate():
 
     list_frame = tk.Frame(right_panel)
     list_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-    ann_listbox = tk.Listbox(list_frame, height=10)
+    ann_listbox = tk.Listbox(list_frame, height=10, font=('Segoe UI', 10))
     ann_scroll = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=ann_listbox.yview)
     ann_listbox.config(yscrollcommand=ann_scroll.set)
     ann_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -472,7 +472,7 @@ def character_annotate():
         color = 'lime' if selected else 'red'
         w = 3 if selected else 2
         canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=w)
-        canvas.create_text(x1+5, y1+10, anchor=tk.NW, text=box['label'], fill='yellow', font=('Arial', 12, 'bold'))
+        canvas.create_text(x1+5, y1+10, anchor=tk.NW, text=box['label'], fill='yellow', font=('Segoe UI', 12, 'bold'))
 
     # --- Controls ---
     btn_frame = tk.Frame(S.r)
@@ -842,8 +842,8 @@ def character_annotate():
             ann_id += 1
         save_path = tk.filedialog.asksaveasfilename(defaultextension='.json', filetypes=[('JSON', '*.json')])
         if save_path:
-            with open(save_path, 'w') as f:
-                json.dump(coco, f, indent=2)
+            with open(save_path, 'w', encoding='utf-8') as f:
+                json.dump(coco, f, indent=2, ensure_ascii=False)
             messagebox.showinfo("Saved", f"Annotations saved to {save_path}")
 
     tk.Button(btn_frame, text='Save Annotations', command=save_annotations).pack(side=tk.RIGHT)
