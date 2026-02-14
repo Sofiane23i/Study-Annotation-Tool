@@ -216,6 +216,11 @@ class HomePanel:
         self.split_tab = tk.Frame(self.stats_notebook, bg=self.colors['bg_dark'])
         self.stats_notebook.add(self.split_tab, text="✂️ Data Split")
         self._build_split_tab()
+        
+        # Tab 7: Recommended Architectures
+        self.arch_tab = tk.Frame(self.stats_notebook, bg=self.colors['bg_dark'])
+        self.stats_notebook.add(self.arch_tab, text="🏗️ Architectures")
+        self._build_architecture_tab()
     
     def _build_preview_tab(self):
         """Build the annotation preview tab with image display and navigation."""
@@ -800,6 +805,517 @@ Select an annotation folder to get personalized recommendations for:
 """
         self.split_text.insert('1.0', default_split_text)
         self.split_text.config(state='disabled')
+    
+    def _build_architecture_tab(self):
+        """Build the recommended architectures tab with papers and GitHub links."""
+        import webbrowser
+        self.webbrowser = webbrowser  # Store for later use
+        
+        # Define architecture recommendations by dataset type
+        self.architectures = {
+            'character_detection': [
+                {
+                    'name': 'YOLOv8 for Character Detection',
+                    'description': 'State-of-the-art real-time object detector. Excellent for character-level detection with high speed and accuracy.',
+                    'paper': 'https://arxiv.org/abs/2305.09972',
+                    'paper_title': 'YOLOv8: A New State-of-the-Art in Real-Time Object Detection (Jocher et al., 2023)',
+                    'github': 'https://github.com/ultralytics/ultralytics',
+                    'dataset_types': ['Character detection', 'Real-time'],
+                    'pros': ['Fast inference', 'Easy training', 'Pre-trained weights'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'Faster R-CNN',
+                    'description': 'Two-stage detector with Region Proposal Network. High accuracy for character bounding box detection.',
+                    'paper': 'https://arxiv.org/abs/1506.01497',
+                    'paper_title': 'Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks (Ren et al., 2015)',
+                    'github': 'https://github.com/facebookresearch/detectron2',
+                    'dataset_types': ['Character detection', 'High accuracy'],
+                    'pros': ['High precision', 'Well-established', 'Detectron2 support'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'FCOS (Fully Convolutional One-Stage)',
+                    'description': 'Anchor-free detector that predicts bounding boxes at each spatial location. Good for dense character detection.',
+                    'paper': 'https://arxiv.org/abs/1904.01355',
+                    'paper_title': 'FCOS: Fully Convolutional One-Stage Object Detection (Tian et al., 2019)',
+                    'github': 'https://github.com/tianzhi0549/FCOS',
+                    'dataset_types': ['Character detection', 'Anchor-free'],
+                    'pros': ['No anchor tuning', 'Dense prediction', 'Simple design'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'RetinaNet with Focal Loss',
+                    'description': 'Single-stage detector addressing class imbalance with focal loss. Effective for character datasets with imbalanced classes.',
+                    'paper': 'https://arxiv.org/abs/1708.02002',
+                    'paper_title': 'Focal Loss for Dense Object Detection (Lin et al., 2017)',
+                    'github': 'https://github.com/facebookresearch/detectron2',
+                    'dataset_types': ['Character detection', 'Imbalanced data'],
+                    'pros': ['Handles class imbalance', 'Single-stage', 'Good for rare characters'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'EfficientDet',
+                    'description': 'Scalable and efficient object detector with compound scaling. Balance between speed and accuracy.',
+                    'paper': 'https://arxiv.org/abs/1911.09070',
+                    'paper_title': 'EfficientDet: Scalable and Efficient Object Detection (Tan et al., 2020)',
+                    'github': 'https://github.com/google/automl/tree/master/efficientdet',
+                    'dataset_types': ['Character detection', 'Efficient'],
+                    'pros': ['Scalable', 'Resource-efficient', 'Multiple model sizes'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'DETR (Detection Transformer)',
+                    'description': 'End-to-end transformer-based detector. No NMS needed, good for character recognition pipelines.',
+                    'paper': 'https://arxiv.org/abs/2005.12872',
+                    'paper_title': 'End-to-End Object Detection with Transformers (Carion et al., 2020)',
+                    'github': 'https://github.com/facebookresearch/detr',
+                    'dataset_types': ['Character detection', 'Transformer'],
+                    'pros': ['End-to-end', 'No NMS', 'Set-based prediction'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'CenterNet',
+                    'description': 'Anchor-free detector using keypoint estimation. Predicts center points of characters.',
+                    'paper': 'https://arxiv.org/abs/1904.07850',
+                    'paper_title': 'Objects as Points (Zhou et al., 2019)',
+                    'github': 'https://github.com/xingyizhou/CenterNet',
+                    'dataset_types': ['Character detection', 'Keypoint-based'],
+                    'pros': ['Simple', 'Fast', 'No anchor boxes'],
+                    'annotation_types': ['character'],
+                },
+                {
+                    'name': 'SSD (Single Shot Detector)',
+                    'description': 'Classic single-shot detector with multi-scale feature maps. Fast and suitable for character detection.',
+                    'paper': 'https://arxiv.org/abs/1512.02325',
+                    'paper_title': 'SSD: Single Shot MultiBox Detector (Liu et al., 2016)',
+                    'github': 'https://github.com/weiliu89/caffe/tree/ssd',
+                    'dataset_types': ['Character detection', 'Multi-scale'],
+                    'pros': ['Real-time', 'Multi-scale detection', 'Well-documented'],
+                    'annotation_types': ['character'],
+                },
+            ],
+            'word_level': [
+                {
+                    'name': 'CRNN (CNN + RNN + CTC)',
+                    'description': 'Classic architecture combining CNN feature extraction with bidirectional LSTM and CTC loss. Best for word-level recognition.',
+                    'paper': 'https://arxiv.org/abs/1507.05717',
+                    'paper_title': 'An End-to-End Trainable Neural Network for Image-based Sequence Recognition (Shi et al., 2015)',
+                    'github': 'https://github.com/bgshih/crnn',
+                    'dataset_types': ['Word-level', 'Short sequences'],
+                    'pros': ['Fast training', 'Good baseline', 'Well-documented'],
+                    'annotation_types': ['word', 'word/line'],
+                },
+                {
+                    'name': 'Attention-based Seq2Seq',
+                    'description': 'Encoder-decoder with attention mechanism. Better at handling variable-length outputs.',
+                    'paper': 'https://arxiv.org/abs/1603.03101',
+                    'paper_title': 'Recursive Recurrent Nets with Attention Modeling for OCR (Lee & Osindero, 2016)',
+                    'github': 'https://github.com/emedvedev/attention-ocr',
+                    'dataset_types': ['Word-level', 'Handwriting'],
+                    'pros': ['Handles irregular text', 'Interpretable attention maps'],
+                    'annotation_types': ['word', 'word/line'],
+                },
+                {
+                    'name': 'STN + CRNN',
+                    'description': 'Spatial Transformer Network for geometric correction before CRNN recognition.',
+                    'paper': 'https://arxiv.org/abs/1603.03915',
+                    'paper_title': 'Robust Scene Text Recognition with Automatic Rectification (Shi et al., 2016)',
+                    'github': 'https://github.com/clovaai/deep-text-recognition-benchmark',
+                    'dataset_types': ['Word-level', 'Scene text', 'Distorted text'],
+                    'pros': ['Handles perspective distortion', 'Robust to rotation'],
+                    'annotation_types': ['word', 'word/line'],
+                },
+            ],
+            'line_level': [
+                {
+                    'name': 'TrOCR',
+                    'description': 'Transformer-based OCR using pre-trained image and text transformers (ViT + GPT-2/RoBERTa).',
+                    'paper': 'https://arxiv.org/abs/2109.10282',
+                    'paper_title': 'TrOCR: Transformer-based Optical Character Recognition with Pre-trained Models (Li et al., 2021)',
+                    'github': 'https://github.com/microsoft/unilm/tree/master/trocr',
+                    'dataset_types': ['Line-level', 'Document OCR', 'Handwriting'],
+                    'pros': ['State-of-the-art performance', 'Pre-trained models available', 'Handles long sequences'],
+                    'annotation_types': ['line', 'word/line'],
+                },
+                {
+                    'name': 'FLOR / PyLaia',
+                    'description': 'Flexible line-level OCR with CRNN backbone. Widely used for historical documents.',
+                    'paper': 'https://arxiv.org/abs/1604.01949',
+                    'paper_title': 'Are Multidimensional Recurrent Layers Really Necessary for Handwritten Text Recognition? (Puigcerver, 2017)',
+                    'github': 'https://github.com/jpuigcerver/PyLaia',
+                    'dataset_types': ['Line-level', 'Historical documents', 'IAM dataset'],
+                    'pros': ['Efficient', 'Good for historical HTR', 'Easy to train'],
+                    'annotation_types': ['line', 'word/line'],
+                },
+                {
+                    'name': 'Transformer HTR',
+                    'description': 'Pure transformer architecture for handwritten text recognition.',
+                    'paper': 'https://arxiv.org/abs/2003.12136',
+                    'paper_title': 'Handwriting Recognition with Large Multidimensional LSTM Recurrent Neural Networks (Wick et al., 2021)',
+                    'github': 'https://github.com/arthurflor23/handwritten-text-recognition',
+                    'dataset_types': ['Line-level', 'Paragraph-level'],
+                    'pros': ['Parallel training', 'Long-range dependencies'],
+                    'annotation_types': ['line', 'word/line'],
+                },
+                {
+                    'name': 'Start-Follow-Read',
+                    'description': 'Neural network system for full page handwriting recognition without explicit segmentation.',
+                    'paper': 'https://arxiv.org/abs/1812.07688',
+                    'paper_title': 'Start, Follow, Read: End-to-End Full-Page Handwriting Recognition (Wigington et al., 2018)',
+                    'github': 'https://github.com/cwig/start_follow_read',
+                    'dataset_types': ['Full page', 'No segmentation needed'],
+                    'pros': ['End-to-end', 'No line segmentation required'],
+                    'annotation_types': ['line'],
+                },
+            ],
+            'page_level': [
+                {
+                    'name': 'Donut (Document Understanding Transformer)',
+                    'description': 'OCR-free document understanding model using image-to-text generation without OCR.',
+                    'paper': 'https://arxiv.org/abs/2111.15664',
+                    'paper_title': 'OCR-free Document Understanding Transformer (Kim et al., 2022)',
+                    'github': 'https://github.com/clovaai/donut',
+                    'dataset_types': ['Document-level', 'Structured documents', 'Forms'],
+                    'pros': ['No OCR pipeline needed', 'Handles complex layouts'],
+                    'annotation_types': ['line', 'word/line', 'unknown'],
+                },
+                {
+                    'name': 'LayoutLMv3',
+                    'description': 'Pre-trained multimodal model for document AI combining text, layout, and image.',
+                    'paper': 'https://arxiv.org/abs/2204.08387',
+                    'paper_title': 'LayoutLMv3: Pre-training for Document AI with Unified Text and Image Masking (Huang et al., 2022)',
+                    'github': 'https://github.com/microsoft/unilm/tree/master/layoutlmv3',
+                    'dataset_types': ['Document understanding', 'Form extraction', 'Table detection'],
+                    'pros': ['Multi-modal', 'Pre-trained', 'Layout-aware'],
+                    'annotation_types': ['line', 'word/line', 'unknown'],
+                },
+                {
+                    'name': 'DTLR (Document Text Line Recognition)',
+                    'description': 'Full-page document recognition with text line detection and recognition.',
+                    'paper': 'https://arxiv.org/abs/2102.09484',
+                    'paper_title': 'Rethinking Text Line Recognition Models (Diaz et al., 2021)',
+                    'github': 'https://github.com/facebookresearch/DTLR',
+                    'dataset_types': ['Full page', 'Multi-line'],
+                    'pros': ['Joint detection and recognition', 'Handles full pages'],
+                    'annotation_types': ['line', 'word/line'],
+                },
+            ],
+            'segmentation': [
+                {
+                    'name': 'ARU-Net',
+                    'description': 'Attention-based Residual U-Net for document layout analysis and text line segmentation.',
+                    'paper': 'https://arxiv.org/abs/1802.03345',
+                    'paper_title': 'ARU-Net: A Neural Pixel Labeler for Layout Analysis of Historical Documents (Gruning et al., 2018)',
+                    'github': 'https://github.com/TobiasGruworking/ARU-Net',
+                    'dataset_types': ['Layout analysis', 'Segmentation', 'Historical documents'],
+                    'pros': ['Pixel-level segmentation', 'Handles complex layouts'],
+                    'annotation_types': ['line', 'character', 'unknown'],
+                },
+                {
+                    'name': 'dhSegment',
+                    'description': 'Deep learning approach for historical document segmentation using encoder-decoder.',
+                    'paper': 'https://arxiv.org/abs/1812.00490',
+                    'paper_title': 'dhSegment: A Generic Deep-Learning Approach for Document Segmentation (Oliveira et al., 2018)',
+                    'github': 'https://github.com/dhlab-epfl/dhSegment',
+                    'dataset_types': ['Historical documents', 'Layout segmentation'],
+                    'pros': ['Versatile', 'Easy to fine-tune', 'Pre-trained models'],
+                    'annotation_types': ['line', 'character', 'unknown'],
+                },
+                {
+                    'name': 'P2PaLA',
+                    'description': 'Page to PAGE Layout Analysis. Neural network for document layout analysis.',
+                    'paper': 'https://arxiv.org/abs/1808.10254',
+                    'paper_title': 'P2PaLA: Page to PAGE Layout Analysis System (Quirós, 2018)',
+                    'github': 'https://github.com/lquirosd/P2PaLA',
+                    'dataset_types': ['Layout analysis', 'Text regions', 'Baselines'],
+                    'pros': ['PAGE XML output', 'Baseline detection'],
+                    'annotation_types': ['line', 'unknown'],
+                },
+            ],
+            'synthetic_data': [
+                {
+                    'name': 'Handwriting Synthesis (Graves)',
+                    'description': 'LSTM-based handwriting generation that can produce realistic synthetic samples.',
+                    'paper': 'https://arxiv.org/abs/1308.0850',
+                    'paper_title': 'Generating Sequences With Recurrent Neural Networks (Graves, 2013)',
+                    'github': 'https://github.com/sjvasquez/handwriting-synthesis',
+                    'dataset_types': ['Synthetic data', 'Data augmentation'],
+                    'pros': ['Style transfer', 'Unlimited synthetic samples'],
+                    'annotation_types': ['gan_generated', 'word', 'line'],
+                },
+                {
+                    'name': 'GANwriting',
+                    'description': 'GAN-based handwriting generation for style-conditioned text synthesis.',
+                    'paper': 'https://arxiv.org/abs/2003.02567',
+                    'paper_title': 'GANwriting: Content-Conditioned Generation of Styled Handwritten Word Images (Kang et al., 2020)',
+                    'github': 'https://github.com/omni-us/research-GANwriting',
+                    'dataset_types': ['Synthetic data', 'Style-conditioned'],
+                    'pros': ['High-quality synthesis', 'Writer style control'],
+                    'annotation_types': ['gan_generated', 'word'],
+                },
+                {
+                    'name': 'ScrabbleGAN',
+                    'description': 'Semi-supervised handwriting generation that learns from both labeled and unlabeled data.',
+                    'paper': 'https://arxiv.org/abs/2003.10557',
+                    'paper_title': 'ScrabbleGAN: Semi-Supervised Varying Length Handwritten Text Generation (Fogel et al., 2020)',
+                    'github': 'https://github.com/AmmieQi/ScrabbleGAN',
+                    'dataset_types': ['Synthetic data', 'Variable length'],
+                    'pros': ['Semi-supervised', 'Variable length output'],
+                    'annotation_types': ['gan_generated', 'word'],
+                },
+            ],
+        }
+        
+        # Section display order with metadata
+        self.section_metadata = {
+            'character_detection': ('🔍 Character Detection (Object Detection)', 'Object detection models for character-level bounding box detection', ['character']),
+            'word_level': ('📝 Word-Level Recognition', 'Best for recognizing individual words or short text segments', ['word', 'word/line']),
+            'line_level': ('📄 Line-Level Recognition', 'For recognizing full text lines, most common for HTR', ['line', 'word/line']),
+            'page_level': ('📰 Page/Document-Level', 'End-to-end document understanding without segmentation', ['line', 'word/line', 'unknown']),
+            'segmentation': ('✂️ Layout & Segmentation', 'For text detection, line segmentation, and layout analysis', ['line', 'character', 'unknown']),
+            'synthetic_data': ('🎨 Synthetic Data Generation', 'For creating synthetic training data and augmentation', ['gan_generated', 'word', 'line']),
+        }
+        
+        # Main container for architecture content
+        self.arch_content_frame = tk.Frame(self.arch_tab, bg=self.colors['bg_dark'])
+        self.arch_content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Build initial view (no dataset selected)
+        self._refresh_architecture_display()
+    
+    def _refresh_architecture_display(self):
+        """Refresh architecture display based on current annotation type."""
+        # Clear existing content
+        for widget in self.arch_content_frame.winfo_children():
+            widget.destroy()
+        
+        # Get current annotation type
+        current_type = None
+        if self.current_stats:
+            current_type = self.current_stats.get('annotation_type', 'unknown')
+        
+        # Main scrollable frame
+        main_canvas = tk.Canvas(self.arch_content_frame, bg=self.colors['bg_dark'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.arch_content_frame, orient="vertical", command=main_canvas.yview)
+        scrollable_frame = tk.Frame(main_canvas, bg=self.colors['bg_dark'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+        )
+        
+        main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        main_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Header
+        header_frame = tk.Frame(scrollable_frame, bg=self.colors['bg_section'], pady=15)
+        header_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+        
+        tk.Label(header_frame, text="🏗️ Recommended HTR/OCR Architectures from Literature",
+                 font=('Segoe UI', 14, 'bold'),
+                 bg=self.colors['bg_section'], fg=self.colors['text_light']).pack()
+        
+        # Show current dataset type if available
+        if current_type and current_type != 'unknown':
+            type_badge = tk.Label(header_frame, text=f"📊 Showing models for: {current_type.upper()} dataset",
+                                  font=('Segoe UI', 11, 'bold'),
+                                  bg=self.colors['accent'], fg='white',
+                                  padx=15, pady=5)
+            type_badge.pack(pady=(10, 0))
+            
+            tk.Label(header_frame, text="Models filtered based on your loaded dataset type",
+                     font=('Segoe UI', 9, 'italic'),
+                     bg=self.colors['bg_section'], fg=self.colors['text_muted']).pack(pady=(5, 0))
+        else:
+            tk.Label(header_frame, text="Load a dataset in Overview tab to see relevant architectures",
+                     font=('Segoe UI', 10),
+                     bg=self.colors['bg_section'], fg=self.colors['text_muted']).pack(pady=(5, 0))
+        
+        # Determine which sections to show
+        sections_to_show = []
+        if current_type and current_type != 'unknown':
+            # Filter sections based on annotation type
+            for section_key, (title, desc, applicable_types) in self.section_metadata.items():
+                if current_type in applicable_types:
+                    sections_to_show.append((section_key, title, desc))
+        else:
+            # Show placeholder message
+            placeholder_frame = tk.Frame(scrollable_frame, bg=self.colors['bg_section'])
+            placeholder_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=20)
+            
+            tk.Label(placeholder_frame, 
+                     text="📋 No Dataset Loaded\n\n"
+                          "To see recommended architectures:\n\n"
+                          "1. Go to the Overview tab\n"
+                          "2. Select an annotation folder\n"
+                          "3. Return here to see models matching your dataset type\n\n"
+                          "Supported dataset types:\n"
+                          "• Character - Object detection models for character bounding boxes\n"
+                          "• Word - Word-level recognition models\n"
+                          "• Line - Line-level HTR models\n"
+                          "• GAN Generated - Synthetic data models",
+                     font=('Segoe UI', 11),
+                     bg=self.colors['bg_section'], fg=self.colors['text_muted'],
+                     justify=tk.CENTER, pady=30).pack(fill=tk.BOTH, expand=True)
+        
+        # Create filtered sections
+        shown_count = 0
+        for section_key, title, desc in sections_to_show:
+            # Filter architectures within section by annotation type
+            filtered_archs = [
+                arch for arch in self.architectures.get(section_key, [])
+                if current_type in arch.get('annotation_types', [])
+            ]
+            
+            if filtered_archs:
+                self._create_filtered_architecture_section(
+                    scrollable_frame, section_key, title, desc, filtered_archs
+                )
+                shown_count += 1
+        
+        # Show count of models
+        if shown_count > 0:
+            total_models = sum(
+                len([a for a in self.architectures.get(sk, []) if current_type in a.get('annotation_types', [])])
+                for sk, _, _ in sections_to_show
+            )
+            
+            count_frame = tk.Frame(scrollable_frame, bg=self.colors['bg_section'])
+            count_frame.pack(fill=tk.X, padx=10, pady=5)
+            tk.Label(count_frame, text=f"✅ Showing {total_models} recommended models in {shown_count} categories",
+                     font=('Segoe UI', 10, 'bold'),
+                     bg=self.colors['bg_section'], fg=self.colors['success']).pack(pady=5)
+        
+        # Footer with additional resources (always show)
+        if current_type:
+            footer_frame = tk.LabelFrame(scrollable_frame, text=" 📚 Additional Resources ",
+                                         font=('Segoe UI', 10, 'bold'),
+                                         bg=self.colors['bg_section'], fg=self.colors['text_light'])
+            footer_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            resources = [
+                ("HTR-United Catalog", "https://htr-united.github.io/", "Collection of HTR datasets and ground truth"),
+                ("Awesome OCR GitHub", "https://github.com/kba/awesome-ocr", "Curated list of OCR resources"),
+                ("READ-COOP Transkribus", "https://readcoop.eu/transkribus/", "Platform for HTR with pre-trained models"),
+                ("IAM Handwriting Database", "https://fki.tic.heia-fr.ch/databases/iam-handwriting-database", "Standard benchmark dataset"),
+            ]
+            
+            for res_name, res_url, res_desc in resources:
+                res_frame = tk.Frame(footer_frame, bg=self.colors['bg_section'])
+                res_frame.pack(fill=tk.X, padx=10, pady=3)
+                
+                link_label = tk.Label(res_frame, text=f"🔗 {res_name}",
+                                      font=('Segoe UI', 10, 'underline'),
+                                      bg=self.colors['bg_section'], fg=self.colors['accent'],
+                                      cursor='hand2')
+                link_label.pack(side=tk.LEFT)
+                link_label.bind("<Button-1>", lambda e, url=res_url: self.webbrowser.open(url))
+                
+                tk.Label(res_frame, text=f" - {res_desc}",
+                         font=('Segoe UI', 9),
+                         bg=self.colors['bg_section'], fg=self.colors['text_muted']).pack(side=tk.LEFT)
+        
+        # Pack canvas and scrollbar
+        main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    def _create_filtered_architecture_section(self, parent, section_key: str, title: str, description: str, architectures: list):
+        """Create a section for filtered architecture category."""
+        section_frame = tk.LabelFrame(parent, text=f" {title} ",
+                                      font=('Segoe UI', 11, 'bold'),
+                                      bg=self.colors['bg_section'], fg=self.colors['text_light'])
+        section_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Section description
+        tk.Label(section_frame, text=description,
+                 font=('Segoe UI', 9, 'italic'),
+                 bg=self.colors['bg_section'], fg=self.colors['text_muted']).pack(anchor='w', padx=10, pady=(5, 10))
+        
+        # Architecture cards
+        for arch in architectures:
+            self._create_architecture_card(section_frame, arch, self.webbrowser)
+    
+    def _create_architecture_section(self, parent, section_key: str, title: str, description: str, webbrowser):
+        """Create a collapsible section for architecture category."""
+        section_frame = tk.LabelFrame(parent, text=f" {title} ",
+                                      font=('Segoe UI', 11, 'bold'),
+                                      bg=self.colors['bg_section'], fg=self.colors['text_light'])
+        section_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Section description
+        tk.Label(section_frame, text=description,
+                 font=('Segoe UI', 9, 'italic'),
+                 bg=self.colors['bg_section'], fg=self.colors['text_muted']).pack(anchor='w', padx=10, pady=(5, 10))
+        
+        # Architecture cards
+        for arch in self.architectures.get(section_key, []):
+            self._create_architecture_card(section_frame, arch, webbrowser)
+    
+    def _create_architecture_card(self, parent, arch: dict, webbrowser):
+        """Create a card for a single architecture."""
+        card = tk.Frame(parent, bg='white', relief=tk.RAISED, bd=1)
+        card.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Header with name
+        header = tk.Frame(card, bg='white')
+        header.pack(fill=tk.X, padx=10, pady=(10, 5))
+        
+        tk.Label(header, text=f"🔬 {arch['name']}",
+                 font=('Segoe UI', 11, 'bold'),
+                 bg='white', fg=self.colors['text_light']).pack(side=tk.LEFT)
+        
+        # Dataset type badges
+        badge_frame = tk.Frame(header, bg='white')
+        badge_frame.pack(side=tk.RIGHT)
+        for dtype in arch.get('dataset_types', []):
+            badge = tk.Label(badge_frame, text=dtype,
+                           font=('Segoe UI', 8),
+                           bg=self.colors['accent'], fg='white',
+                           padx=6, pady=2)
+            badge.pack(side=tk.LEFT, padx=2)
+        
+        # Description
+        tk.Label(card, text=arch['description'],
+                 font=('Segoe UI', 10),
+                 bg='white', fg=self.colors['text_light'],
+                 wraplength=700, justify=tk.LEFT).pack(anchor='w', padx=10, pady=5)
+        
+        # Paper title
+        tk.Label(card, text=f"📄 {arch['paper_title']}",
+                 font=('Segoe UI', 9, 'italic'),
+                 bg='white', fg=self.colors['text_muted'],
+                 wraplength=700, justify=tk.LEFT).pack(anchor='w', padx=10)
+        
+        # Links frame
+        links_frame = tk.Frame(card, bg='white')
+        links_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
+        
+        # Paper link
+        paper_link = tk.Label(links_frame, text="📖 Paper (arXiv)",
+                              font=('Segoe UI', 10, 'underline'),
+                              bg='white', fg='#2980b9', cursor='hand2')
+        paper_link.pack(side=tk.LEFT, padx=(0, 15))
+        paper_link.bind("<Button-1>", lambda e, url=arch['paper']: webbrowser.open(url))
+        
+        # GitHub link
+        github_link = tk.Label(links_frame, text="💻 GitHub Repository",
+                               font=('Segoe UI', 10, 'underline'),
+                               bg='white', fg='#27ae60', cursor='hand2')
+        github_link.pack(side=tk.LEFT, padx=(0, 15))
+        github_link.bind("<Button-1>", lambda e, url=arch['github']: webbrowser.open(url))
+        
+        # Pros
+        pros_text = " • ".join(arch.get('pros', []))
+        if pros_text:
+            tk.Label(links_frame, text=f"✅ {pros_text}",
+                     font=('Segoe UI', 9),
+                     bg='white', fg=self.colors['success']).pack(side=tk.RIGHT)
         
     def _select_folder(self, folder_path: str):
         """Handle folder selection and load statistics."""
@@ -848,6 +1364,9 @@ Select an annotation folder to get personalized recommendations for:
         
         # Update split suggestions
         self._update_split_suggestions(stats)
+        
+        # Update architecture recommendations based on dataset type
+        self._refresh_architecture_display()
         
     def _update_overview(self, stats: Dict):
         """Update the overview tab with statistics."""

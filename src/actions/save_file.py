@@ -253,3 +253,14 @@ def save_file():
         S.btn_htr["state"] = "disabled"
     if S.btn_open:
         S.btn_open["state"] = "disabled"
+    
+    # Enable character detection button now that words are detected
+    if hasattr(S, 'btn_char_detect') and S.btn_char_detect:
+        S.btn_char_detect["state"] = "normal"
+    
+    # Store word image paths for character detection
+    S.word_image_paths = []
+    if hasattr(S, 'directoryout') and os.path.exists(S.directoryout):
+        word_files = sorted(glob.glob(os.path.join(S.directoryout, '*.png')),
+                           key=lambda x: int(os.path.splitext(os.path.basename(x))[0]) if os.path.splitext(os.path.basename(x))[0].isdigit() else 0)
+        S.word_image_paths = word_files

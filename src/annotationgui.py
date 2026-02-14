@@ -277,8 +277,9 @@ def back_to_detection_from_annotation():
         if widget_exists(S.line_detect_container):
             S.line_detect_container.pack(expand=True, fill=tk.BOTH)
     elif mode == 'character':
-        # Re-enable character detection button
-        if widget_exists(S.btn_char_detect):
+        # Only re-enable character detection button if word images exist
+        word_image_paths = getattr(S, 'word_image_paths', [])
+        if widget_exists(S.btn_char_detect) and word_image_paths:
             S.btn_char_detect.config(state='normal')
         # Show character detection container
         if widget_exists(S.char_detect_container):
@@ -434,8 +435,17 @@ def set_segmentation_mode(mode):
                 btn_line_detect.config(state='disabled')
             if widget_exists(btn_save):
                 btn_save.config(state='disabled')
+            # Only enable char detect if word images exist
             if widget_exists(btn_char_detect):
-                btn_char_detect.config(state='normal')
+                word_image_paths = getattr(S, 'word_image_paths', [])
+                if word_image_paths:
+                    btn_char_detect.config(state='normal')
+                else:
+                    from tkinter import messagebox
+                    messagebox.showinfo("Words Required", 
+                                        "Please run word detection first.\n"
+                                        "Character detection works on individual word images.")
+                    return False
         segmentation_mode_var.set(f"Segmentation mode: {mode.title()} (locked for remaining images)")
         S.auto_detect_on_navigation = True
     elif S.segmentation_mode != mode:
@@ -590,8 +600,11 @@ def detect_lines_with_autofill():
                     btn_line_detect.config(state='normal')
                 if widget_exists(btn_save):
                     btn_save.config(state='normal')
+                # Only enable char detect if word images exist
                 if widget_exists(btn_char_detect):
-                    btn_char_detect.config(state='normal')
+                    word_image_paths = getattr(S, 'word_image_paths', [])
+                    if word_image_paths:
+                        btn_char_detect.config(state='normal')
                 return
     
     if not image_path or not os.path.exists(image_path):
@@ -817,11 +830,12 @@ def detect_words_with_mode_lock():
                 btn_line_detect.config(state='normal')
             if widget_exists(btn_save):
                 btn_save.config(state='normal')
+            # Only enable char detect if word images exist
             if widget_exists(btn_char_detect):
-                btn_char_detect.config(state='normal')
+                word_image_paths = getattr(S, 'word_image_paths', [])
+                if word_image_paths:
+                    btn_char_detect.config(state='normal')
             return
-    
-    # Swap to word-detection view
     if widget_exists(S.annotation_container):
         S.annotation_container.pack_forget()
     if widget_exists(S.load_image_container):
@@ -841,7 +855,7 @@ btn_save = create_styled_button(word_row, "🎯 Detect Words", detect_words_with
 btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 def detect_characters():
-    """Detect characters using saved templates and display in right panel."""
+    """Detect characters on word images (requires word detection first)."""
     from tkinter import messagebox
     import json
     from utils import match_template_in_image
@@ -849,30 +863,42 @@ def detect_characters():
     if not ensure_images_available():
         return
     
+    # Check if word detection has been performed
+    word_image_paths = getattr(S, 'word_image_paths', [])
+    word_bboxes = getattr(S, 'word_bboxes', [])
+    
+    if not word_image_paths and not word_bboxes:
+        messagebox.showwarning("Words Required", 
+                               "Please run word detection first.\n\n"
+                               "Character detection works on individual word images\n"
+                               "to improve accuracy.")
+        return
+    
+    # If we have word images from directoryout, use those
+    if not word_image_paths and hasattr(S, 'directoryout') and os.path.exists(S.directoryout):
+        import glob
+        word_files = sorted(glob.glob(os.path.join(S.directoryout, '*.png')),
+                           key=lambda x: int(os.path.splitext(os.path.basename(x))[0]) if os.path.splitext(os.path.basename(x))[0].isdigit() else 0)
+        word_image_paths = word_files
+        S.word_image_paths = word_files
+    
+    if not word_image_paths:
+        messagebox.showwarning("No Word Images", 
+                               "No word images found. Please run word detection first.")
+        return
+    
     # Disable other detection buttons
     disable_other_detection_buttons('character')
     
-    # Get current image path - use input mode to determine source
-    image_path = None
-    current_mode = input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+    # Initialize word selection index
+    S.char_word_index = getattr(S, 'char_word_index', 0)
+    if S.char_word_index >= len(word_image_paths):
+        S.char_word_index = 0
     
-    if current_mode == 'generate':
-        # Generate mode: use GAN generated images
-        if hasattr(S, 'gan_batch_images') and S.gan_batch_images:
-            gan_idx = getattr(S, 'gan_batch_index', 0)
-            if gan_idx < len(S.gan_batch_images):
-                image_path = S.gan_batch_images[gan_idx]
-    else:
-        # Load mode: use loaded images
-        if hasattr(S, 'list_of_files') and S.list_of_files and S.pos < len(S.list_of_files):
-            image_path = S.list_of_files[S.pos]
-    
-    if not image_path or not os.path.exists(image_path):
-        messagebox.showwarning("No Image", "Please load an image first.")
-        return
-    
-    # Store for annotation
-    S.char_image_path = image_path
+    # Get current word image
+    current_word_path = word_image_paths[S.char_word_index]
+    S.char_image_path = current_word_path
+    S.char_total_words = len(word_image_paths)
     
     # Try to load saved character templates
     templates_dir = os.path.join(os.path.dirname(__file__), 'character_templates')
@@ -887,14 +913,14 @@ def detect_characters():
                 template_path = os.path.join(templates_dir, fname)
                 S.char_templates.append({'label': char_label, 'path': template_path})
     
-    # Load image for detection
+    # Load word image for detection
     try:
-        img = cv2.imread(image_path)
+        img = cv2.imread(current_word_path)
         if img is None:
-            messagebox.showerror("Error", f"Could not read image:\n{image_path}")
+            messagebox.showerror("Error", f"Could not read word image:\n{current_word_path}")
             return
         
-        pil_img = Image.open(image_path)
+        pil_img = Image.open(current_word_path)
         
         # If we have templates, perform template matching
         detected_chars = []
@@ -933,6 +959,10 @@ def detect_characters():
         # Update back button text based on input mode
         update_back_button_text()
         
+        # Update word navigation label
+        if hasattr(S, 'update_char_word_label'):
+            S.update_char_word_label()
+        
         # Draw image with detected boxes
         display_detected_characters(img, detected_chars)
         
@@ -944,22 +974,115 @@ def detect_characters():
         if hasattr(S, 'char_zoom_canvas'):
             S.char_zoom_canvas.delete('all')
         
-        # Update info label
+        # Update info label with word navigation info
+        word_info = f"Word {S.char_word_index + 1}/{S.char_total_words}"
         if S.char_templates:
             if detected_chars:
-                S.char_info_label.config(text=f"Found {len(detected_chars)} characters using {len(S.char_templates)} templates. Select to edit.")
+                S.char_info_label.config(text=f"{word_info} | Found {len(detected_chars)} chars using {len(S.char_templates)} templates.")
             else:
-                S.char_info_label.config(text=f"No matches found with {len(S.char_templates)} templates. Draw a box to create new template.")
+                S.char_info_label.config(text=f"{word_info} | No matches. Draw a box to create template.")
         else:
-            S.char_info_label.config(text="No character templates saved. Draw a bounding box around a character to create a template.")
+            S.char_info_label.config(text=f"{word_info} | No templates saved. Draw box around a character.")
         
         if hasattr(S, 'update_status') and S.update_status:
-            S.update_status(f"Character detection: {len(detected_chars)} found")
+            S.update_status(f"Character detection on word {S.char_word_index + 1}/{S.char_total_words}: {len(detected_chars)} found")
             
     except Exception as e:
         messagebox.showerror("Error", f"Character detection failed:\n{str(e)}")
         import traceback
         traceback.print_exc()
+
+def char_next_word():
+    """Navigate to next word image for character detection."""
+    word_image_paths = getattr(S, 'word_image_paths', [])
+    if not word_image_paths:
+        return
+    
+    S.char_word_index = getattr(S, 'char_word_index', 0)
+    if S.char_word_index < len(word_image_paths) - 1:
+        S.char_word_index += 1
+        # Reload character detection on new word
+        _load_char_word_image()
+
+def char_prev_word():
+    """Navigate to previous word image for character detection."""
+    word_image_paths = getattr(S, 'word_image_paths', [])
+    if not word_image_paths:
+        return
+    
+    S.char_word_index = getattr(S, 'char_word_index', 0)
+    if S.char_word_index > 0:
+        S.char_word_index -= 1
+        # Reload character detection on new word
+        _load_char_word_image()
+
+def _load_char_word_image():
+    """Load current word image for character detection."""
+    from utils import match_template_in_image
+    
+    word_image_paths = getattr(S, 'word_image_paths', [])
+    if not word_image_paths:
+        return
+    
+    idx = S.char_word_index
+    if idx >= len(word_image_paths):
+        return
+    
+    current_word_path = word_image_paths[idx]
+    S.char_image_path = current_word_path
+    
+    try:
+        img = cv2.imread(current_word_path)
+        if img is None:
+            return
+        
+        pil_img = Image.open(current_word_path)
+        
+        # Perform template matching if templates exist
+        detected_chars = []
+        if hasattr(S, 'char_templates') and S.char_templates:
+            threshold = S.char_threshold_var.get() if hasattr(S, 'char_threshold_var') else 0.6
+            for tpl_info in S.char_templates:
+                try:
+                    template_img = Image.open(tpl_info['path'])
+                    matches = match_template_in_image(pil_img, template_img, threshold=threshold)
+                    for m in matches:
+                        detected_chars.append({
+                            'coords': (m[0], m[1], m[2], m[3]),
+                            'label': tpl_info['label'],
+                            'score': m[4]
+                        })
+                except Exception as e:
+                    print(f"Template matching error: {e}")
+        
+        S.char_detected_boxes = detected_chars
+        
+        # Update display
+        display_detected_characters(img, detected_chars)
+        
+        # Refresh listbox
+        if hasattr(S, 'refresh_char_listbox'):
+            S.refresh_char_listbox()
+        
+        # Update word navigation label
+        if hasattr(S, 'update_char_word_label'):
+            S.update_char_word_label()
+        
+        # Update info label
+        word_info = f"Word {idx + 1}/{S.char_total_words}"
+        if S.char_templates:
+            if detected_chars:
+                S.char_info_label.config(text=f"{word_info} | Found {len(detected_chars)} chars using {len(S.char_templates)} templates.")
+            else:
+                S.char_info_label.config(text=f"{word_info} | No matches. Draw a box to create template.")
+        else:
+            S.char_info_label.config(text=f"{word_info} | No templates saved. Draw box around a character.")
+        
+        if hasattr(S, 'update_status') and S.update_status:
+            S.update_status(f"Word {idx + 1}/{S.char_total_words}: {len(detected_chars)} characters")
+            
+    except Exception as e:
+        print(f"Error loading word image: {e}")
 
 def display_detected_characters(img, detected_chars, highlight_idx=None):
     """Display image with detected character boxes on the character detection canvas."""
@@ -974,6 +1097,7 @@ char_row = tk.Frame(section2, bg=COLORS['bg_section'])
 char_row.pack(fill=tk.X, pady=3)
 btn_char_detect = create_styled_button(char_row, "🔤 Detect Chars", detect_characters, 'warning', width=18)
 btn_char_detect.pack(side=tk.LEFT, fill=tk.X, expand=True)
+btn_char_detect.config(state='disabled')  # Disabled until word detection is done
 
 # Detection parameters frame
 params_frame = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -1025,12 +1149,17 @@ def update_detection_visibility():
     try:
         available = images_available()
         seg_mode = getattr(S, 'segmentation_mode', None)
+        word_image_paths = getattr(S, 'word_image_paths', [])
         
         if available:
-            # Enable all buttons first
+            # Enable line and word detection buttons
             btn_line_detect.config(state='normal')
             btn_save.config(state='normal')
-            btn_char_detect.config(state='normal')
+            # Only enable char detect if word images exist
+            if word_image_paths:
+                btn_char_detect.config(state='normal')
+            else:
+                btn_char_detect.config(state='disabled')
             scale_slider.config(state='normal')
             padding_slider.config(state='normal')
             
@@ -1439,8 +1568,13 @@ def back_to_image_view():
         btn_save.config(state='normal')
     if widget_exists(btn_line_detect):
         btn_line_detect.config(state='normal')
+    # Only enable char detect if word images exist
     if widget_exists(btn_char_detect):
-        btn_char_detect.config(state='normal')
+        word_image_paths = getattr(S, 'word_image_paths', [])
+        if word_image_paths:
+            btn_char_detect.config(state='normal')
+        else:
+            btn_char_detect.config(state='disabled')
     # Reset segmentation mode to allow switching
     S.segmentation_mode = None
     segmentation_mode_var.set("Segmentation mode: Not selected")
@@ -1701,8 +1835,13 @@ def back_to_image_view_from_line():
         btn_save.config(state='normal')
     if widget_exists(btn_line_detect):
         btn_line_detect.config(state='normal')
+    # Only enable char detect if word images exist
     if widget_exists(btn_char_detect):
-        btn_char_detect.config(state='normal')
+        word_image_paths = getattr(S, 'word_image_paths', [])
+        if word_image_paths:
+            btn_char_detect.config(state='normal')
+        else:
+            btn_char_detect.config(state='disabled')
     # Reset segmentation mode to allow switching
     S.segmentation_mode = None
     segmentation_mode_var.set("Segmentation mode: Not selected")
@@ -1755,7 +1894,38 @@ char_detect_header = tk.Label(char_detect_container, text=" 🔤 Character Detec
                               font=('Segoe UI', 12, 'bold'),
                               bg=COLORS['bg_section'], fg=COLORS['text_light'],
                               relief=tk.FLAT, bd=1, padx=10, pady=8)
-char_detect_header.pack(fill=tk.X, pady=(0, 10))
+char_detect_header.pack(fill=tk.X, pady=(0, 5))
+
+# Word navigation frame
+char_word_nav_frame = tk.Frame(char_detect_container, bg=COLORS['bg_section'])
+char_word_nav_frame.pack(fill=tk.X, pady=(0, 10), padx=4)
+
+tk.Label(char_word_nav_frame, text="📝 Word Image:", font=('Segoe UI', 10, 'bold'),
+         bg=COLORS['bg_section'], fg=COLORS['text_light']).pack(side=tk.LEFT, padx=5)
+
+char_word_label = tk.Label(char_word_nav_frame, text="0/0", font=('Segoe UI', 10),
+                           bg=COLORS['bg_section'], fg=COLORS['accent'])
+char_word_label.pack(side=tk.LEFT, padx=5)
+
+def update_char_word_label():
+    """Update the word navigation label."""
+    idx = getattr(S, 'char_word_index', 0)
+    total = getattr(S, 'char_total_words', 0)
+    char_word_label.config(text=f"{idx + 1}/{total}")
+
+S.update_char_word_label = update_char_word_label
+
+btn_char_prev_word = tk.Button(char_word_nav_frame, text="◀ Prev Word", 
+                               command=lambda: (char_prev_word(), update_char_word_label()),
+                               bg=COLORS['accent'], fg='white', font=('Segoe UI', 9, 'bold'),
+                               padx=10, pady=3, relief=tk.GROOVE)
+btn_char_prev_word.pack(side=tk.LEFT, padx=5)
+
+btn_char_next_word = tk.Button(char_word_nav_frame, text="Next Word ▶", 
+                               command=lambda: (char_next_word(), update_char_word_label()),
+                               bg=COLORS['accent'], fg='white', font=('Segoe UI', 9, 'bold'),
+                               padx=10, pady=3, relief=tk.GROOVE)
+btn_char_next_word.pack(side=tk.LEFT, padx=5)
 
 # Main content area with image on left, zoom+list on right
 char_main_frame = tk.Frame(char_detect_container, bg=COLORS['bg_dark'])
@@ -2191,8 +2361,13 @@ def back_to_image_view_from_char():
         btn_save.config(state='normal')
     if widget_exists(btn_line_detect):
         btn_line_detect.config(state='normal')
+    # Only enable char detect if word images exist
     if widget_exists(btn_char_detect):
-        btn_char_detect.config(state='normal')
+        word_image_paths = getattr(S, 'word_image_paths', [])
+        if word_image_paths:
+            btn_char_detect.config(state='normal')
+        else:
+            btn_char_detect.config(state='disabled')
     # Reset segmentation mode to allow switching
     S.segmentation_mode = None
     segmentation_mode_var.set("Segmentation mode: Not selected")
