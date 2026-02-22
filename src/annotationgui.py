@@ -24,6 +24,9 @@ from actions.line_annotate import detect_text_lines
 # Home panel for corpus statistics
 from home_panel import HomePanel, create_home_button
 
+# Workflow engine
+from workflow import WorkflowManager
+
 import shutil
 import glob
 
@@ -155,6 +158,22 @@ txt_edit = tk.Frame(window, bg=COLORS['bg_dark'])
 # Sidebar panel with sections
 fr_buttons = tk.Frame(window, bg=COLORS['bg_panel'], relief=tk.FLAT, bd=0, padx=10, pady=10)
 
+# ------------------------------------------------------------------
+# Sidebar visibility helpers
+# ------------------------------------------------------------------
+def show_sidebar():
+    """Show the left sidebar (fr_buttons) when entering non-workflow views."""
+    if not fr_buttons.winfo_manager():
+        fr_buttons.grid(row=0, column=0, sticky="nsew")
+
+def hide_sidebar():
+    """Hide the left sidebar when the workflow panel is the active view."""
+    if fr_buttons.winfo_manager():
+        fr_buttons.grid_remove()
+
+S.show_sidebar = show_sidebar
+S.hide_sidebar = hide_sidebar
+
 # App title in sidebar
 title_frame = tk.Frame(fr_buttons, bg=COLORS['bg_panel'])
 title_frame.pack(fill=tk.X, pady=(0, 15))
@@ -184,23 +203,27 @@ def toggle_home_panel():
     
     # Check if home panel is currently visible
     if home_panel_instance.container.winfo_manager():
-        # Hide home panel, show previous view
+        # Hide home panel, return to workflow or previous view
         home_panel_instance.hide()
         btn_home.config(text="🏠 Home Dashboard", bg=COLORS['accent'])
-        # Show the appropriate container based on mode
-        if input_mode_var.get() == 'generate':
+        if getattr(S, 'workflow_active', False) and workflow_manager_instance:
+            workflow_manager_instance.container.pack(expand=True, fill=tk.BOTH)
+            hide_sidebar()
+        elif input_mode_var.get() == 'generate':
             if widget_exists(S.generate_htr_container):
                 S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
         else:
             if widget_exists(S.load_image_container):
                 S.load_image_container.pack(expand=True, fill=tk.BOTH)
     else:
-        # Hide all containers, show home panel
+        # Hide all containers + workflow, show home panel
         for container in [S.load_image_container, S.generate_htr_container, 
                          S.word_detect_container, S.line_detect_container,
                          S.char_detect_container, S.annotation_container]:
             if widget_exists(container):
                 container.pack_forget()
+        if workflow_manager_instance and widget_exists(workflow_manager_instance.container):
+            workflow_manager_instance.container.pack_forget()
         
         home_panel_instance.show()
         btn_home.config(text="✖ Close Dashboard", bg=COLORS['danger'])
@@ -208,8 +231,11 @@ def toggle_home_panel():
 def close_home_panel():
     """Callback when home panel is closed."""
     btn_home.config(text="🏠 Home Dashboard", bg=COLORS['accent'])
-    # Show the appropriate container based on mode
-    if input_mode_var.get() == 'generate':
+    # Return to workflow if active, otherwise show appropriate container
+    if getattr(S, 'workflow_active', False) and workflow_manager_instance:
+        workflow_manager_instance.container.pack(expand=True, fill=tk.BOTH)
+        hide_sidebar()
+    elif input_mode_var.get() == 'generate':
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
     else:
@@ -222,6 +248,77 @@ btn_home.pack(fill=tk.X, padx=5)
 # Store in state
 S.btn_home = btn_home
 S.toggle_home_panel = toggle_home_panel
+
+# ============================================
+# WORKFLOW BUTTON
+# ============================================
+workflow_section = tk.Frame(fr_buttons, bg=COLORS['bg_panel'])
+workflow_section.pack(fill=tk.X, pady=(0, 10))
+
+workflow_manager_instance = None  # initialised later after content_frame
+
+def toggle_workflow_panel():
+    """Toggle the 5-step workflow wizard."""
+    global workflow_manager_instance
+    if workflow_manager_instance is None:
+        return
+
+    if workflow_manager_instance.container.winfo_manager():
+        # Hide workflow, restore previous view
+        workflow_manager_instance.container.pack_forget()
+        btn_workflow.config(text="🔄 Workflow Wizard", bg=COLORS['accent'])
+        show_sidebar()
+        if input_mode_var.get() == 'generate':
+            if widget_exists(S.generate_htr_container):
+                S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+        else:
+            if widget_exists(S.load_image_container):
+                S.load_image_container.pack(expand=True, fill=tk.BOTH)
+        S.workflow_active = False
+    else:
+        # Hide everything, show workflow
+        for container in [S.load_image_container, S.generate_htr_container,
+                          S.word_detect_container, S.line_detect_container,
+                          S.char_detect_container, S.annotation_container]:
+            if widget_exists(container):
+                container.pack_forget()
+        if home_panel_instance and home_panel_instance.container.winfo_manager():
+            home_panel_instance.hide()
+            btn_home.config(text="🏠 Home Dashboard", bg=COLORS['accent'])
+        workflow_manager_instance.container.pack(expand=True, fill=tk.BOTH)
+        btn_workflow.config(text="✖ Close Workflow", bg=COLORS['danger'])
+        S.workflow_active = True
+        hide_sidebar()
+
+def close_workflow_panel():
+    """Callback when workflow panel is closed."""
+    btn_workflow.config(text="🔄 Workflow Wizard", bg=COLORS['accent'])
+    S.workflow_active = False
+    show_sidebar()
+    # Show home panel or appropriate container
+    if home_panel_instance:
+        home_panel_instance.show()
+        btn_home.config(text="✖ Close Dashboard", bg=COLORS['danger'])
+    elif input_mode_var.get() == 'generate':
+        if widget_exists(S.generate_htr_container):
+            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+    else:
+        if widget_exists(S.load_image_container):
+            S.load_image_container.pack(expand=True, fill=tk.BOTH)
+
+btn_workflow = tk.Button(
+    workflow_section, text="🔄 Workflow Wizard",
+    font=('Segoe UI', 10, 'bold'), bg=COLORS['accent'], fg='white',
+    activebackground=COLORS['accent_hover'], activeforeground='white',
+    relief=tk.FLAT, cursor='hand2', padx=8, pady=6,
+    command=toggle_workflow_panel)
+btn_workflow.pack(fill=tk.X, padx=5)
+
+S.btn_workflow = btn_workflow
+S.toggle_workflow_panel = toggle_workflow_panel
+
+# Separator
+tk.Frame(fr_buttons, height=2, bg=COLORS['border']).pack(fill=tk.X, pady=5)
 
 # ============================================
 # Section 1: Input Mode Toggle
@@ -285,12 +382,16 @@ def back_to_detection_from_annotation():
         if widget_exists(S.char_detect_container):
             S.char_detect_container.pack(expand=True, fill=tk.BOTH)
     else:
-        # Default: show the appropriate container based on input mode
-        current_input_mode = S.input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
-        if current_input_mode == 'generate' and widget_exists(S.generate_htr_container):
-            S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
-        elif widget_exists(S.load_image_container):
-            S.load_image_container.pack(expand=True, fill=tk.BOTH)
+        # Default: return to workflow if active, otherwise show container based on input mode
+        if getattr(S, 'workflow_active', False) and hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+            S.workflow_manager.container.pack(expand=True, fill=tk.BOTH)
+            hide_sidebar()
+        else:
+            current_input_mode = S.input_mode_var.get() if hasattr(S, 'input_mode_var') else 'load'
+            if current_input_mode == 'generate' and widget_exists(S.generate_htr_container):
+                S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
+            elif widget_exists(S.load_image_container):
+                S.load_image_container.pack(expand=True, fill=tk.BOTH)
 
 # Store the function in state so it can be accessed from other modules
 S.back_to_detection_from_annotation = back_to_detection_from_annotation
@@ -653,6 +754,12 @@ def detect_lines_with_autofill():
             S.word_detect_container.pack_forget()
         if widget_exists(S.annotation_container):
             S.annotation_container.pack_forget()
+        # Hide workflow/home panels when entering detection view
+        if hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+            S.workflow_manager.container.pack_forget()
+        if hasattr(S, 'home_panel') and widget_exists(S.home_panel.container):
+            S.home_panel.container.pack_forget()
+        show_sidebar()
         if widget_exists(S.line_detect_container):
             S.line_detect_container.pack(expand=True, fill=tk.BOTH)
         
@@ -842,6 +949,12 @@ def detect_words_with_mode_lock():
         S.load_image_container.pack_forget()
     if widget_exists(S.generate_htr_container):
         S.generate_htr_container.pack_forget()
+    # Hide workflow/home panels when entering detection view
+    if hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+        S.workflow_manager.container.pack_forget()
+    if hasattr(S, 'home_panel') and widget_exists(S.home_panel.container):
+        S.home_panel.container.pack_forget()
+    show_sidebar()
     if widget_exists(S.word_detect_container):
         S.word_detect_container.pack(expand=True, fill=tk.BOTH)
     # Update back button text based on input mode
@@ -953,6 +1066,12 @@ def detect_characters():
             S.line_detect_container.pack_forget()
         if widget_exists(S.annotation_container):
             S.annotation_container.pack_forget()
+        # Hide workflow/home panels when entering detection view
+        if hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+            S.workflow_manager.container.pack_forget()
+        if hasattr(S, 'home_panel') and widget_exists(S.home_panel.container):
+            S.home_panel.container.pack_forget()
+        show_sidebar()
         if widget_exists(S.char_detect_container):
             S.char_detect_container.pack(expand=True, fill=tk.BOTH)
         
@@ -1272,6 +1391,9 @@ status_label.pack()
 fr_buttons.grid(row=0, column=0, sticky="nsew")
 txt_edit.grid(row=0, column=1, sticky="nsew")
 
+# Hide sidebar at startup — workflow is the main interface
+fr_buttons.grid_remove()
+
 # Initial button states - disable detection buttons until image is loaded
 btn_save["state"] = "disabled"
 btn_line_detect["state"] = "disabled"
@@ -1319,9 +1441,16 @@ content_frame.pack(expand=True, fill=tk.BOTH)
 home_panel_instance = HomePanel(content_frame, COLORS, close_home_panel)
 S.home_panel = home_panel_instance
 
-# Show home panel by default at startup
-home_panel_instance.show()
-btn_home.config(text="✖ Close Dashboard", bg=COLORS['danger'])
+# ============================================
+# WORKFLOW PANEL INITIALIZATION
+# ============================================
+workflow_manager_instance = WorkflowManager(content_frame, COLORS, close_workflow_panel)
+S.workflow_manager = workflow_manager_instance
+
+# Show workflow panel by default at startup (main interface)
+workflow_manager_instance.container.pack(expand=True, fill=tk.BOTH)
+btn_workflow.config(text="✖ Close Workflow", bg=COLORS['danger'])
+S.workflow_active = True
 
 # ============================================
 # CONTAINER 1: Load Image Interface
@@ -1556,8 +1685,11 @@ word_btn_frame.pack(fill=tk.X, pady=(8, 0))
 def back_to_image_view():
     if widget_exists(word_detect_container):
         word_detect_container.pack_forget()
-    # Show appropriate container based on input mode
-    if input_mode_var.get() == 'generate':
+    # Return to workflow if active, otherwise show appropriate container
+    if getattr(S, 'workflow_active', False) and hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+        S.workflow_manager.container.pack(expand=True, fill=tk.BOTH)
+        hide_sidebar()
+    elif input_mode_var.get() == 'generate':
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
     else:
@@ -1823,8 +1955,11 @@ line_btn_frame.pack(fill=tk.X, pady=(8, 0))
 def back_to_image_view_from_line():
     if widget_exists(line_detect_container):
         line_detect_container.pack_forget()
-    # Show appropriate container based on input mode
-    if input_mode_var.get() == 'generate':
+    # Return to workflow if active, otherwise show appropriate container
+    if getattr(S, 'workflow_active', False) and hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+        S.workflow_manager.container.pack(expand=True, fill=tk.BOTH)
+        hide_sidebar()
+    elif input_mode_var.get() == 'generate':
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
     else:
@@ -2349,8 +2484,11 @@ char_btn_frame.pack(fill=tk.X, pady=(8, 0))
 def back_to_image_view_from_char():
     if widget_exists(char_detect_container):
         char_detect_container.pack_forget()
-    # Show appropriate container based on input mode
-    if input_mode_var.get() == 'generate':
+    # Return to workflow if active, otherwise show appropriate container
+    if getattr(S, 'workflow_active', False) and hasattr(S, 'workflow_manager') and widget_exists(S.workflow_manager.container):
+        S.workflow_manager.container.pack(expand=True, fill=tk.BOTH)
+        hide_sidebar()
+    elif input_mode_var.get() == 'generate':
         if widget_exists(S.generate_htr_container):
             S.generate_htr_container.pack(expand=True, fill=tk.BOTH)
     else:
@@ -3014,6 +3152,11 @@ def reset_progress():
 # Export progress functions to state
 S.show_progress = show_progress
 S.reset_progress = reset_progress
+
+# Export detection functions so the workflow annotation panel can call them
+S._workflow_detect_words = detect_words_with_mode_lock
+S._workflow_detect_lines = detect_lines_with_autofill
+S._workflow_detect_chars = detect_characters
 
 # Show startup message
 update_status("Ready | Press F1 for shortcuts")

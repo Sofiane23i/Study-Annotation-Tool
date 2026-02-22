@@ -108,3 +108,9 @@ reset_progress = None
 home_panel = None
 btn_home = None
 toggle_home_panel = None
+
+# Workflow panel reference
+workflow_manager = None
+btn_workflow = None
+toggle_workflow_panel = None
+workflow_active = False
