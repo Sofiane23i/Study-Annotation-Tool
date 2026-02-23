@@ -12,11 +12,12 @@ import state as S
 
 STEP_DEFINITIONS = [
     {"id": 1, "title": "Dataset Ingestion",      "icon": "📥", "key": "ingestion"},
-    {"id": 2, "title": "Annotation",              "icon": "✏️", "key": "annotation"},
-    {"id": 3, "title": "Statistical Analysis",    "icon": "📊", "key": "analysis"},
-    {"id": 4, "title": "Splitting & Optimization", "icon": "✂️", "key": "splitting"},
-    {"id": 5, "title": "Model Recommendation",    "icon": "🤖", "key": "recommendation"},
-    {"id": 6, "title": "Collaboration & Export",   "icon": "🤝", "key": "collaboration"},
+    {"id": 2, "title": "Preprocessing",           "icon": "🔍", "key": "preprocessing"},
+    {"id": 3, "title": "Annotation",              "icon": "✏️", "key": "annotation"},
+    {"id": 4, "title": "Statistical Analysis",    "icon": "📊", "key": "analysis"},
+    {"id": 5, "title": "Splitting & Optimization", "icon": "✂️", "key": "splitting"},
+    {"id": 6, "title": "Model Recommendation",    "icon": "🤖", "key": "recommendation"},
+    {"id": 7, "title": "Collaboration & Export",   "icon": "🤝", "key": "collaboration"},
 ]
 
 
@@ -183,12 +184,8 @@ class WorkflowManager:
         else:
             self.btn_next.config(text="Next ▶")
 
-        # Disable Next on ingestion step until data is loaded
-        if key == "ingestion" and self.step_states[key] != "completed":
-            has_data = bool(getattr(S, 'list_of_files', None))
-            self.btn_next.config(state="normal" if has_data else "disabled")
-        else:
-            self.btn_next.config(state="normal")
+        # Always enable Next
+        self.btn_next.config(state="normal")
         self.nav_info.config(
             text=f"Step {idx + 1} of {len(STEP_DEFINITIONS)}:  {step_def['icon']}  {step_def['title']}"
         )
@@ -219,6 +216,9 @@ class WorkflowManager:
         if key == "ingestion":
             from workflow.step_ingestion import IngestionPanel
             return IngestionPanel(self.content_frame, self.colors, self.dataset_ctx, self._notify_dataset_loaded)
+        elif key == "preprocessing":
+            from workflow.step_preprocessing import PreprocessingPanel
+            return PreprocessingPanel(self.content_frame, self.colors, self.dataset_ctx)
         elif key == "annotation":
             from workflow.step_annotation import AnnotationPanel
             return AnnotationPanel(self.content_frame, self.colors, self.dataset_ctx)
@@ -245,7 +245,7 @@ class WorkflowManager:
 
     def _notify_dataset_loaded(self):
         """Called by ingestion panel when dataset is loaded/configured."""
-        # Auto-advance to step 2 (Annotation) after ingestion
+        # Auto-advance to step 2 (Preprocessing) after ingestion
         self.step_states["ingestion"] = "completed"
         self._show_step(1)
 

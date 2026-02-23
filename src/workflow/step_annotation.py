@@ -1,8 +1,7 @@
 """
-Step 2 – Annotation Panel
-Provides word, line, and character detection controls integrated
-into the workflow wizard.  Delegates actual detection to the existing
-functions in annotationgui.py and shows results in the existing containers.
+Step 3 – Annotation Panel
+Character-level annotation and review of detected words/lines.
+Assumes Preprocessing (Step 2) has already run word/line detection.
 """
 
 import os
@@ -15,7 +14,7 @@ import state as S
 
 
 class AnnotationPanel(tk.Frame):
-    """Annotation step - detection buttons + image preview + annotation status."""
+    """Annotation step - character detection + annotation status + image preview."""
 
     def __init__(self, parent: tk.Widget, colors: Dict[str, str],
                  dataset_ctx: Dict[str, Any]):
@@ -33,11 +32,11 @@ class AnnotationPanel(tk.Frame):
         # Header
         hdr = tk.Frame(self, bg=self.colors["bg_section"], pady=12, padx=15)
         hdr.pack(fill=tk.X)
-        tk.Label(hdr, text="✏️  Step 2 — Annotation",
+        tk.Label(hdr, text="✏️  Step 3 — Annotation",
                  font=("Segoe UI", 15, "bold"),
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_light"]).pack(side=tk.LEFT)
-        tk.Label(hdr, text="Detect and annotate text in your images",
+        tk.Label(hdr, text="Annotate detected text in your images",
                  font=("Segoe UI", 10),
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_muted"]).pack(side=tk.RIGHT)
@@ -49,16 +48,13 @@ class AnnotationPanel(tk.Frame):
         # Left column: image preview + navigation
         left = tk.Frame(body, bg=self.colors["bg_dark"])
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-
         self._build_preview(left)
 
-        # Right column: detection controls + status
+        # Right column: character detection + annotation status
         right = tk.Frame(body, bg=self.colors["bg_dark"], width=340)
         right.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         right.pack_propagate(False)
-
-        self._build_detection_controls(right)
-        self._build_params_section(right)
+        self._build_character_detection(right)
         self._build_annotation_status(right)
 
     # ---- Preview ---------------------------------------------------
@@ -102,50 +98,23 @@ class AnnotationPanel(tk.Frame):
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_muted"]).pack(padx=8, pady=(0, 6))
 
-    # ---- Detection controls ----------------------------------------
-    def _build_detection_controls(self, parent):
-        det = tk.LabelFrame(parent, text=" 🔍 Detection ",
+    # ---- Character Detection ------------------------------------------
+    def _build_character_detection(self, parent):
+        det = tk.LabelFrame(parent, text=" 🔤 Character Detection ",
                             font=("Segoe UI", 10, "bold"),
                             bg=self.colors["bg_section"],
                             fg=self.colors["text_light"])
         det.pack(fill=tk.X, pady=(0, 8))
 
         info = tk.Label(det,
-                        text="Choose a detection mode to segment and\n"
-                             "annotate your document images.",
+                        text="Run character detection on words found\n"
+                             "during the Preprocessing step.",
                         font=("Segoe UI", 9),
                         bg=self.colors["bg_section"],
                         fg=self.colors["text_muted"],
                         justify=tk.LEFT)
         info.pack(anchor="w", padx=10, pady=(8, 6))
 
-        # WORD detection
-        wf = tk.Frame(det, bg=self.colors["bg_section"])
-        wf.pack(fill=tk.X, padx=10, pady=3)
-        self.btn_word = tk.Button(
-            wf, text="🎯 Detect Words", command=self._detect_words,
-            font=("Segoe UI", 10, "bold"),
-            bg="#e67e22", fg="white", activebackground="#d35400",
-            relief=tk.FLAT, cursor="hand2", padx=10, pady=6)
-        self.btn_word.pack(fill=tk.X)
-        tk.Label(wf, text="Neural-network word segmentation",
-                 font=("Segoe UI", 8), bg=self.colors["bg_section"],
-                 fg=self.colors["text_muted"]).pack(anchor="w")
-
-        # LINE detection
-        lf = tk.Frame(det, bg=self.colors["bg_section"])
-        lf.pack(fill=tk.X, padx=10, pady=3)
-        self.btn_line = tk.Button(
-            lf, text="📄 Detect Lines", command=self._detect_lines,
-            font=("Segoe UI", 10, "bold"),
-            bg="#2980b9", fg="white", activebackground="#1f6da0",
-            relief=tk.FLAT, cursor="hand2", padx=10, pady=6)
-        self.btn_line.pack(fill=tk.X)
-        tk.Label(lf, text="Horizontal projection line segmentation",
-                 font=("Segoe UI", 8), bg=self.colors["bg_section"],
-                 fg=self.colors["text_muted"]).pack(anchor="w")
-
-        # CHARACTER detection
         cf = tk.Frame(det, bg=self.colors["bg_section"])
         cf.pack(fill=tk.X, padx=10, pady=(3, 8))
         self.btn_char = tk.Button(
@@ -158,61 +127,15 @@ class AnnotationPanel(tk.Frame):
                  font=("Segoe UI", 8), bg=self.colors["bg_section"],
                  fg=self.colors["text_muted"]).pack(anchor="w")
 
-        # Segmentation mode indicator
-        self.seg_mode_var = tk.StringVar(value="Mode: not chosen")
+        self.seg_mode_var = tk.StringVar(value="")
         tk.Label(det, textvariable=self.seg_mode_var,
                  font=("Segoe UI", 9, "italic"),
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_muted"]).pack(padx=10, pady=(0, 8))
 
-    # ---- Scale & Padding -------------------------------------------
-    def _build_params_section(self, parent):
-        """Scale and Padding sliders."""
-        params = tk.LabelFrame(parent, text=" ⚙️ Scale & Padding ",
-                               font=("Segoe UI", 10, "bold"),
-                               bg=self.colors["bg_section"],
-                               fg=self.colors["text_light"])
-        params.pack(fill=tk.X, pady=(0, 8))
-
-        # Scale
-        self.scale_label = tk.Label(
-            params,
-            text=f"🔎 Scale: {getattr(S, 'image_scale', 1.0):.1f}x",
-            font=("Segoe UI", 9),
-            bg=self.colors["bg_section"],
-            fg=self.colors["text_light"], anchor="w")
-        self.scale_label.pack(fill=tk.X, padx=10, pady=(8, 0))
-        self.scale_slider = tk.Scale(
-            params, from_=0.5, to=3.0, resolution=0.1,
-            orient=tk.HORIZONTAL,
-            bg=self.colors["bg_section"], fg=self.colors["text_light"],
-            troughcolor=self.colors["bg_dark"],
-            activebackground=self.colors.get("accent", "#007bff"),
-            highlightthickness=0, sliderrelief=tk.FLAT,
-            command=self._on_scale_change)
-        self.scale_slider.set(getattr(S, 'image_scale', 1.0))
-        self.scale_slider.pack(fill=tk.X, padx=10)
-
-        # Padding
-        self.padding_label = tk.Label(
-            params,
-            text=f"📏 Padding: {getattr(S, 'bbox_padding', 0)}px",
-            font=("Segoe UI", 9),
-            bg=self.colors["bg_section"],
-            fg=self.colors["text_light"], anchor="w")
-        self.padding_label.pack(fill=tk.X, padx=10, pady=(6, 0))
-        self.padding_slider = tk.Scale(
-            params, from_=-20, to=50, resolution=1,
-            orient=tk.HORIZONTAL,
-            bg=self.colors["bg_section"], fg=self.colors["text_light"],
-            troughcolor=self.colors["bg_dark"],
-            activebackground=self.colors.get("accent", "#007bff"),
-            highlightthickness=0, sliderrelief=tk.FLAT,
-            command=self._on_padding_change)
-        self.padding_slider.set(getattr(S, 'bbox_padding', 0))
-        self.padding_slider.pack(fill=tk.X, padx=10, pady=(0, 8))
-
-    # ---- Annotation status -----------------------------------------
+    # ------------------------------------------------------------------
+    # Detection delegates
+    # ------------------------------------------------------------------
     def _build_annotation_status(self, parent):
         st = tk.LabelFrame(parent, text=" 📋 Annotation Status ",
                            font=("Segoe UI", 10, "bold"),
@@ -234,12 +157,6 @@ class AnnotationPanel(tk.Frame):
                   font=("Segoe UI", 9), bg=self.colors["secondary_bg"],
                   fg=self.colors["text_light"], relief=tk.FLAT,
                   padx=8, pady=3, cursor="hand2").pack(side=tk.LEFT)
-
-        tk.Button(btn_frame, text="📝 Open Annotation View",
-                  command=self._open_annotation_container,
-                  font=("Segoe UI", 9, "bold"), bg=self.colors["accent"],
-                  fg="white", relief=tk.FLAT,
-                  padx=8, pady=3, cursor="hand2").pack(side=tk.RIGHT)
 
         self._refresh_status()
 
@@ -328,43 +245,6 @@ class AnnotationPanel(tk.Frame):
             return False
         return True
 
-    def _detect_words(self):
-        if not self._ensure_images_ready():
-            return
-        self.seg_mode_var.set("Mode: Word Detection 🎯")
-        # Call the existing word detection function
-        try:
-            func = getattr(S, "_workflow_detect_words", None)
-            if func:
-                func()
-            else:
-                messagebox.showinfo(
-                    "Word Detection",
-                    "Word detection will run via the main detection engine.\n"
-                    "Use the sidebar '🎯 Detect Words' button or press the "
-                    "shortcut key while the workflow is active.")
-        except Exception as e:
-            messagebox.showerror("Detection Error", str(e))
-        self._refresh_status()
-
-    def _detect_lines(self):
-        if not self._ensure_images_ready():
-            return
-        self.seg_mode_var.set("Mode: Line Detection 📄")
-        try:
-            func = getattr(S, "_workflow_detect_lines", None)
-            if func:
-                func()
-            else:
-                messagebox.showinfo(
-                    "Line Detection",
-                    "Line detection will run via the main detection engine.\n"
-                    "Use the sidebar '📄 Detect Lines' button or press the "
-                    "shortcut key while the workflow is active.")
-        except Exception as e:
-            messagebox.showerror("Detection Error", str(e))
-        self._refresh_status()
-
     def _detect_characters(self):
         if not self._ensure_images_ready():
             return
@@ -372,10 +252,10 @@ class AnnotationPanel(tk.Frame):
         if not word_paths:
             messagebox.showwarning(
                 "Words Required",
-                "Please run Word Detection first.\n"
+                "Please run Word Detection in the Preprocessing step first.\n"
                 "Character detection works on detected word images.")
             return
-        self.seg_mode_var.set("Mode: Character Detection 🔤")
+        self.seg_mode_var.set("Character Detection 🔤")
         try:
             func = getattr(S, "_workflow_detect_chars", None)
             if func:
@@ -389,31 +269,6 @@ class AnnotationPanel(tk.Frame):
         except Exception as e:
             messagebox.showerror("Detection Error", str(e))
         self._refresh_status()
-
-    # ------------------------------------------------------------------
-    # Scale & Padding helpers
-    # ------------------------------------------------------------------
-    def _on_scale_change(self, val):
-        v = float(val)
-        S.image_scale = v
-        self.scale_label.config(text=f"🔎 Scale: {v:.1f}x")
-
-    def _on_padding_change(self, val):
-        v = int(float(val))
-        S.bbox_padding = v
-        self.padding_label.config(text=f"📏 Padding: {v}px")
-
-    def _open_annotation_container(self):
-        """Switch to the annotation container in the main GUI."""
-        if hasattr(S, "annotation_container") and S.annotation_container:
-            try:
-                S.annotation_container.pack(expand=True, fill=tk.BOTH)
-            except Exception:
-                pass
-        messagebox.showinfo(
-            "Annotation",
-            "The annotation view is accessible from the detection panels.\n"
-            "Run detection first, then click 'Proceed to Annotation'.")
 
     # ------------------------------------------------------------------
     # Status
