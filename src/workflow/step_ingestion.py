@@ -156,6 +156,170 @@ class IngestionPanel(tk.Frame):
             w.bind("<Leave>", leave)
             w.bind("<Button-1>", on_click)
 
+    # ------------------------------------------------------------------
+    # Load Annotation File + conditional actions
+    # ------------------------------------------------------------------
+
+    def _build_annotation_actions(self, parent):
+        """Build the conditional action buttons (hidden by default)."""
+        # Annotation status label
+        self.ann_status_var = tk.StringVar(value="")
+        self.ann_status_label = tk.Label(
+            parent, textvariable=self.ann_status_var,
+            font=("Segoe UI", 9), bg=self.colors["bg_section"],
+            fg="#4caf50", wraplength=500, justify=tk.LEFT)
+        self.ann_status_label.pack(fill=tk.X, padx=12, pady=(8, 4))
+
+        btn_row = tk.Frame(parent, bg=self.colors["bg_section"])
+        btn_row.pack(fill=tk.X, padx=12, pady=(0, 8))
+
+        # Button: View Annotation Result
+        self.btn_view_annotation = tk.Button(
+            btn_row, text="🔎 View Annotation Result",
+            command=self._view_annotation_result,
+            font=("Segoe UI", 9, "bold"),
+            bg="#5c6bc0", fg="white",
+            activebackground="#3f51b5",
+            relief=tk.FLAT, padx=10, pady=5, cursor="hand2")
+        self.btn_view_annotation.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Button: Statistical Analysis
+        self.btn_goto_analysis = tk.Button(
+            btn_row, text="📊 Statistical Analysis",
+            command=self._goto_analysis,
+            font=("Segoe UI", 9, "bold"),
+            bg="#43a047", fg="white",
+            activebackground="#388e3c",
+            relief=tk.FLAT, padx=10, pady=5, cursor="hand2")
+        self.btn_goto_analysis.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Button: Preprocessing
+        self.btn_goto_preprocessing = tk.Button(
+            btn_row, text="🔍 Preprocessing",
+            command=self._goto_preprocessing,
+            font=("Segoe UI", 9, "bold"),
+            bg="#fb8c00", fg="white",
+            activebackground="#ef6c00",
+            relief=tk.FLAT, padx=10, pady=5, cursor="hand2")
+        self.btn_goto_preprocessing.pack(side=tk.LEFT)
+
+    def _browse_annotation_file(self):
+        """Open a file dialog to select an annotation file."""
+        filetypes = [
+            ("Annotation files", "*.json *.txt *.csv *.jsonl"),
+            ("JSON files", "*.json"),
+            ("Text files", "*.txt"),
+            ("CSV files", "*.csv"),
+            ("All files", "*.*"),
+        ]
+        path = filedialog.askopenfilename(
+            title="Select Annotation File", filetypes=filetypes)
+        if not path:
+            return
+
+        # Parse the annotation file
+        self._parse_annotation_file(path)
+        self.ctx["annotation_file"] = path
+        self.ctx["metadata"]["has_annotations"] = True
+
+        ann_count = len(self.ctx.get("annotations", []))
+        self.ann_card_info.set(f"✅ {os.path.basename(path)} ({ann_count} entries)")
+
+        # Check if annotation relates to the loaded image folder
+        if self._annotation_matches_dataset():
+            self._show_annotation_actions()
+        else:
+            self._hide_annotation_actions()
+            messagebox.showwarning(
+                "Annotation Mismatch",
+                "The annotation file does not appear to match the loaded "
+                "image folder.\n\nPlease load the correct image folder first, "
+                "or load an annotation file that corresponds to the current dataset.")
+
+    def _annotation_matches_dataset(self) -> bool:
+        """Check whether the loaded annotation file relates to the current dataset."""
+        images = self.ctx.get("images", [])
+        annotations = self.ctx.get("annotations", [])
+        if not images or not annotations:
+            return False
+
+        img_basenames = {os.path.splitext(os.path.basename(p))[0].lower() for p in images}
+        img_filenames = {os.path.basename(p).lower() for p in images}
+
+        # Check if annotation IDs / image references overlap with loaded images
+        matched = 0
+        for ann in annotations:
+            ann_id = str(ann.get("image_id", ann.get("filename", ann.get("file", "")))).strip()
+            if not ann_id:
+                continue
+            ann_id_lower = ann_id.lower()
+            ann_id_no_ext = os.path.splitext(ann_id_lower)[0]
+            if ann_id_lower in img_filenames or ann_id_no_ext in img_basenames:
+                matched += 1
+
+        # Also accept if annotation and images share the same parent directory
+        ann_file = self.ctx.get("annotation_file", "")
+        img_dir = self.ctx.get("image_dir", "")
+        same_dir = False
+        if ann_file and img_dir:
+            ann_dir = os.path.dirname(os.path.abspath(ann_file))
+            img_dir_abs = os.path.abspath(img_dir)
+            same_dir = (ann_dir == img_dir_abs
+                        or ann_dir == os.path.dirname(img_dir_abs)
+                        or img_dir_abs.startswith(ann_dir))
+
+        # Consider a match if at least 10% of annotations match, or same dir
+        threshold = max(1, len(annotations) * 0.1)
+        return matched >= threshold or same_dir
+
+    def _show_annotation_actions(self):
+        """Show the conditional action buttons below the status bar in the right panel."""
+        ann_count = len(self.ctx.get("annotations", []))
+        img_count = len(self.ctx.get("images", []))
+        self.ann_status_var.set(
+            f"✅ Annotation matched: {ann_count} entries for {img_count} images")
+        self.annotation_actions_frame.pack(fill=tk.X)
+
+        # Update preview/integrity if dataset is already loaded
+        if self.ctx.get("images"):
+            self._show_preview(self.ctx["images"], has_annotations=True)
+
+    def _hide_annotation_actions(self):
+        """Hide the conditional action buttons."""
+        self.annotation_actions_frame.pack_forget()
+
+    def _view_annotation_result(self):
+        """Show the annotation result — jump to annotation step."""
+        wm = getattr(S, "workflow_manager", None)
+        if wm:
+            wm.step_states["ingestion"] = "completed"
+            wm._show_step(2)  # Annotation step (index 2)
+        else:
+            messagebox.showinfo(
+                "View Annotation",
+                f"Annotation file: {self.ctx.get('annotation_file', 'N/A')}\n"
+                f"Entries: {len(self.ctx.get('annotations', []))}")
+
+    def _goto_analysis(self):
+        """Jump directly to the Statistical Analysis step."""
+        wm = getattr(S, "workflow_manager", None)
+        if wm:
+            wm.step_states["ingestion"] = "completed"
+            wm._show_step(3)  # Analysis step (index 3)
+        else:
+            messagebox.showinfo("Statistical Analysis",
+                                "Workflow manager not available.")
+
+    def _goto_preprocessing(self):
+        """Jump to the Preprocessing step."""
+        wm = getattr(S, "workflow_manager", None)
+        if wm:
+            wm.step_states["ingestion"] = "completed"
+            wm._show_step(1)  # Preprocessing step (index 1)
+        else:
+            messagebox.showinfo("Preprocessing",
+                                "Workflow manager not available.")
+
     def _build_generate_htr_card(self, parent):
         """Card to open the Generate HTR interface (same style as Load Dataset)."""
         card = tk.Frame(parent, bg=self.colors["bg_section"],
@@ -462,7 +626,7 @@ class IngestionPanel(tk.Frame):
                  fg=self.colors["text_muted"]).pack(side=tk.LEFT, padx=12)
 
     def _build_preview_panel(self, parent):
-        # Load Dataset button pinned at the top
+        # Load Dataset + Load Annotation buttons pinned at the top
         load_bar = tk.Frame(parent, bg=self.colors["bg_section"])
         load_bar.pack(fill=tk.X, padx=12, pady=(8, 4))
 
@@ -472,6 +636,20 @@ class IngestionPanel(tk.Frame):
                   bg=self.colors["accent"], fg="white",
                   activebackground=self.colors.get("accent_hover", "#005fc5"),
                   relief=tk.FLAT, padx=14, pady=5, cursor="hand2").pack(side=tk.LEFT)
+
+        tk.Button(load_bar, text="📝 Load Annotation",
+                  command=self._browse_annotation_file,
+                  font=("Segoe UI", 10, "bold"),
+                  bg="#5c6bc0", fg="white",
+                  activebackground="#3f51b5",
+                  relief=tk.FLAT, padx=14, pady=5, cursor="hand2").pack(side=tk.LEFT, padx=(8, 0))
+
+        self.ann_card_info = tk.StringVar(value="")
+        self.ann_info_label = tk.Label(load_bar, textvariable=self.ann_card_info,
+                                       font=("Segoe UI", 8),
+                                       bg=self.colors["bg_section"],
+                                       fg="#4caf50")
+        self.ann_info_label.pack(side=tk.LEFT, padx=(10, 0))
 
         # --- Scrollable content area ---
         preview_canvas = tk.Canvas(parent, bg=self.colors["bg_section"],
@@ -514,6 +692,12 @@ class IngestionPanel(tk.Frame):
         tk.Label(inner, textvariable=self.status_var,
                  font=("Segoe UI", 10),
                  bg=self.colors["bg_section"], fg=self.colors["text_muted"]).pack(anchor="w", padx=12)
+
+        # ---- Conditional annotation actions (hidden until annotation matches) ----
+        self.annotation_actions_frame = tk.Frame(inner, bg=self.colors["bg_section"])
+        self._build_annotation_actions(self.annotation_actions_frame)
+        # Initially hidden
+        # (will be shown via _show_annotation_actions when annotation matches)
 
         sep = tk.Frame(inner, height=1, bg=self.colors["border"])
         sep.pack(fill=tk.X, padx=12, pady=8)
@@ -1269,6 +1453,14 @@ class IngestionPanel(tk.Frame):
         # Update preview / metadata
         self._extract_metadata(images)
         self._show_preview(images, has_annotations=has_ann)
+
+        # Show annotation actions if auto-detected annotation matches
+        if has_ann and self._annotation_matches_dataset():
+            ann_count = len(self.ctx.get("annotations", []))
+            self.ann_card_info.set(f"✅ {os.path.basename(ann_file)} ({ann_count} entries)")
+            self._show_annotation_actions()
+        else:
+            self._hide_annotation_actions()
 
         # Sync main GUI folder info
         if hasattr(S, "folder_path_var"):

@@ -76,6 +76,9 @@ class PreprocessingPanel(tk.Frame):
         # ── Annotation type selector ───────────────────────────────────
         self._build_annotation_type_panel()
 
+        # ── Annotation source selector ─────────────────────────────────
+        self._build_annotation_source_panel()
+
     # ── Toolbar ────────────────────────────────────────────────────────
     def _build_toolbar(self):
         tb = tk.Frame(self, bg=self.colors["bg_section"])
@@ -503,6 +506,64 @@ class PreprocessingPanel(tk.Frame):
         chosen = self._annotation_type_var.get()
         S.annotation_type = chosen
         self.ctx["annotation_type"] = chosen
+
+    # ── Annotation source selector ─────────────────────────────────────
+    def _build_annotation_source_panel(self):
+        """Let the user choose whether annotation uses preprocessing
+        crops (detection bbox images) or the original loaded images."""
+        sf = tk.LabelFrame(self, text=" Annotation Source ",
+                           font=("Segoe UI", 10, "bold"),
+                           bg=self.colors["bg_section"],
+                           fg=self.colors["text_light"])
+        sf.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+        inner = tk.Frame(sf, bg=self.colors["bg_section"])
+        inner.pack(fill=tk.X, padx=10, pady=6)
+
+        tk.Label(inner,
+                 text="Choose how images are fed into the Annotation stage.",
+                 font=("Segoe UI", 9),
+                 bg=self.colors["bg_section"],
+                 fg=self.colors["text_muted"],
+                 wraplength=700, justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
+
+        self._annotation_source_var = tk.StringVar(
+            value=getattr(S, "annotation_source", "original"))
+
+        btn_row = tk.Frame(inner, bg=self.colors["bg_section"])
+        btn_row.pack(fill=tk.X)
+
+        sources = [
+            ("With Preprocessing", "preprocessing", "#27ae60",
+             "Use detection crops (bbox images from word / line detection)"),
+            ("Original Images",    "original",       "#7f8c8d",
+             "Use the loaded images as-is, without detection"),
+        ]
+
+        for label, value, color, tip in sources:
+            rb = tk.Radiobutton(
+                btn_row, text=f"  {label}  ",
+                variable=self._annotation_source_var,
+                value=value,
+                font=("Segoe UI", 10, "bold"),
+                bg=self.colors["bg_section"],
+                fg=self.colors["text_light"],
+                activebackground=self.colors["bg_section"],
+                activeforeground=self.colors["text_light"],
+                selectcolor=color,
+                indicatoron=True,
+                cursor="hand2",
+                command=self._on_annotation_source_change)
+            rb.pack(side=tk.LEFT, padx=(0, 8))
+            tk.Label(btn_row, text=tip,
+                     font=("Segoe UI", 8),
+                     bg=self.colors["bg_section"],
+                     fg=self.colors["text_muted"]).pack(side=tk.LEFT, padx=(0, 16))
+
+    def _on_annotation_source_change(self):
+        chosen = self._annotation_source_var.get()
+        S.annotation_source = chosen
+        self.ctx["annotation_source"] = chosen
 
     # ==================================================================
     # TAB SWITCHING
@@ -971,10 +1032,28 @@ class PreprocessingPanel(tk.Frame):
             return False
         return True
 
+    def _clear_previous_detections(self, clear_word_crops=False):
+        """Remove all previous detection results so modes don't overlap.
+        If clear_word_crops is True, also remove crops in out_dir."""
+        S.word_bboxes = []
+        S.detected_lines = []
+        S.char_detected_boxes = []
+        if clear_word_crops:
+            out_dir = getattr(S, 'directoryout', None)
+            if out_dir and os.path.isdir(out_dir):
+                for f in os.listdir(out_dir):
+                    fp = os.path.join(out_dir, f)
+                    try:
+                        if os.path.isfile(fp):
+                            os.remove(fp)
+                    except Exception:
+                        pass
+
     def _detect_words(self):
         """Run word detection directly (core logic only, no UI switch)."""
         if not self._ensure_images_ready():
             return
+        self._clear_previous_detections(clear_word_crops=True)
         self.mode_var.set("Word Detection")
         self.btn_word.config(state=tk.DISABLED, text="Detecting...")
         self.update_idletasks()
@@ -996,6 +1075,7 @@ class PreprocessingPanel(tk.Frame):
         """Run line detection directly (core logic only, no UI switch)."""
         if not self._ensure_images_ready():
             return
+        self._clear_previous_detections(clear_word_crops=False)
         self.mode_var.set("Line Detection")
         self.btn_line.config(state=tk.DISABLED, text="Detecting...")
         self.update_idletasks()
@@ -1027,6 +1107,7 @@ class PreprocessingPanel(tk.Frame):
         Works on word images when available, otherwise on the input image."""
         if not self._ensure_images_ready():
             return
+        self._clear_previous_detections(clear_word_crops=False)
         self.mode_var.set("Character Detection")
         self.btn_char.config(state=tk.DISABLED, text="Detecting...")
         self.update_idletasks()
@@ -1136,4 +1217,11 @@ class PreprocessingPanel(tk.Frame):
             self._annotation_type_var.set(ann_type)
         S.annotation_type = ann_type
         ctx["annotation_type"] = ann_type
+        # Sync annotation source
+        ann_src = ctx.get("annotation_source",
+                          getattr(S, "annotation_source", "original"))
+        if hasattr(self, "_annotation_source_var"):
+            self._annotation_source_var.set(ann_src)
+        S.annotation_source = ann_src
+        ctx["annotation_source"] = ann_src
         self._load_current_image()
