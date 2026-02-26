@@ -168,6 +168,9 @@ class WorkflowManager:
         if key not in self.step_panels:
             panel = self._build_step_panel(key)
             self.step_panels[key] = panel
+            # Initial refresh so the panel loads data on first visit
+            if hasattr(panel, "refresh"):
+                panel.refresh(self.dataset_ctx)
         else:
             # Refresh panel if it has a refresh method
             panel = self.step_panels[key]
@@ -176,16 +179,19 @@ class WorkflowManager:
 
         self.step_panels[key].pack(fill=tk.BOTH, expand=True)
 
-        # Update nav buttons
-        self.btn_prev.config(state="normal" if idx > 0 else "disabled")
+        # Update nav buttons with stage names
         step_def = STEP_DEFINITIONS[idx]
-        if idx == len(STEP_DEFINITIONS) - 1:
-            self.btn_next.config(text="✅ Finish")
+        if idx > 0:
+            prev_title = STEP_DEFINITIONS[idx - 1]["title"]
+            self.btn_prev.config(state="normal", text=f"◀ {prev_title}")
         else:
-            self.btn_next.config(text="Next ▶")
+            self.btn_prev.config(state="disabled", text="◀ Previous")
 
-        # Always enable Next
-        self.btn_next.config(state="normal")
+        if idx == len(STEP_DEFINITIONS) - 1:
+            self.btn_next.config(text="✅ Finish", state="normal")
+        else:
+            next_title = STEP_DEFINITIONS[idx + 1]["title"]
+            self.btn_next.config(text=f"{next_title} ▶", state="normal")
         self.nav_info.config(
             text=f"Step {idx + 1} of {len(STEP_DEFINITIONS)}:  {step_def['icon']}  {step_def['title']}"
         )

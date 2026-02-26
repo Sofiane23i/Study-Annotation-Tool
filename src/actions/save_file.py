@@ -75,8 +75,11 @@ def save_file():
         new_height = int(source_img.height * scale)
         source_img = source_img.resize((new_width, new_height), Image.LANCZOS)
     
-    # Save scaled image to temp directory
+    # Save scaled image to temp directory (convert to RGB to ensure
+    # compatibility — JPEG does not support alpha / palette modes)
     scaled_img_path = os.path.join(dst_dir, 'scaled_input.jpg')
+    if source_img.mode not in ('RGB', 'L'):
+        source_img = source_img.convert('RGB')
     source_img.save(scaled_img_path, 'JPEG', quality=95)
 
     # Update progress
@@ -205,6 +208,7 @@ def save_file():
     
     S.word_bboxes = word_bboxes
     S.word_detect_boxes = S.finalrowsbbx[:]
+    S.detection_scale = scale  # remember scale used during detection
 
     # Use the new display function if available (stored in state to avoid circular import)
     if hasattr(S, 'word_detect_canvas') and S.word_detect_canvas:

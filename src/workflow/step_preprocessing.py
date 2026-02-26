@@ -32,6 +32,8 @@ class PreprocessingPanel(tk.Frame):
         self._canvas_offset = (0, 0)
         self._raw_cv_img = None            # current cv2 image (BGR)
         self._draw_state = {"start": None, "rect": None}
+        self._view_zoom = 1.0              # viewport zoom (independent from detection scale)
+        self._pan_state = {"start": None}  # for middle-mouse panning
         self._build_ui()
 
     # ==================================================================
@@ -45,7 +47,7 @@ class PreprocessingPanel(tk.Frame):
                  font=("Segoe UI", 14, "bold"),
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_light"]).pack(side=tk.LEFT)
-        tk.Label(hdr, text="Detect words and lines before annotation",
+        tk.Label(hdr, text="Detect words, lines, and characters before annotation",
                  font=("Segoe UI", 10),
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_muted"]).pack(side=tk.RIGHT)
@@ -70,6 +72,9 @@ class PreprocessingPanel(tk.Frame):
 
         # ── Bottom: manual annotation horizontal panel ─────────────────
         self._build_manual_panel()
+
+        # ── Annotation type selector ───────────────────────────────────
+        self._build_annotation_type_panel()
 
     # ── Toolbar ────────────────────────────────────────────────────────
     def _build_toolbar(self):
@@ -116,6 +121,13 @@ class PreprocessingPanel(tk.Frame):
             relief=tk.FLAT, cursor="hand2", padx=8, pady=2)
         self.btn_line.pack(side=tk.LEFT, padx=2)
 
+        self.btn_char = tk.Button(
+            tb, text="Detect Characters", command=self._detect_characters,
+            font=("Segoe UI", 9, "bold"),
+            bg="#8e44ad", fg="white", activebackground="#6c3483",
+            relief=tk.FLAT, cursor="hand2", padx=8, pady=2)
+        self.btn_char.pack(side=tk.LEFT, padx=2)
+
         self.mode_var = tk.StringVar(value="")
         tk.Label(tb, textvariable=self.mode_var,
                  font=("Segoe UI", 8, "italic"),
@@ -156,6 +168,35 @@ class PreprocessingPanel(tk.Frame):
         self.padding_slider.set(getattr(S, "bbox_padding", 0))
         self.padding_slider.pack(side=tk.LEFT)
 
+        # Separator
+        tk.Frame(tb, bg=self.colors["border"], width=1).pack(
+            side=tk.LEFT, fill=tk.Y, padx=4, pady=2)
+
+        # Zoom controls
+        tk.Label(tb, text="Zoom:", font=("Segoe UI", 8),
+                 bg=self.colors["bg_section"],
+                 fg=self.colors["text_light"]).pack(side=tk.LEFT, padx=(4, 1))
+        tk.Button(tb, text="−", command=self._zoom_out,
+                  font=("Segoe UI", 10, "bold"),
+                  bg=self.colors["secondary_bg"],
+                  fg=self.colors["text_light"], relief=tk.FLAT,
+                  width=2, cursor="hand2").pack(side=tk.LEFT)
+        self._zoom_var = tk.StringVar(value="100%")
+        tk.Label(tb, textvariable=self._zoom_var,
+                 font=("Segoe UI", 8, "bold"), width=5,
+                 bg=self.colors["bg_section"],
+                 fg=self.colors["text_light"]).pack(side=tk.LEFT)
+        tk.Button(tb, text="+", command=self._zoom_in,
+                  font=("Segoe UI", 10, "bold"),
+                  bg=self.colors["secondary_bg"],
+                  fg=self.colors["text_light"], relief=tk.FLAT,
+                  width=2, cursor="hand2").pack(side=tk.LEFT)
+        tk.Button(tb, text="Fit", command=self._zoom_fit,
+                  font=("Segoe UI", 8),
+                  bg=self.colors["secondary_bg"],
+                  fg=self.colors["text_light"], relief=tk.FLAT,
+                  padx=4, cursor="hand2").pack(side=tk.LEFT, padx=(2, 0))
+
         # Refresh button
         tk.Button(tb, text="Refresh", command=self._full_refresh,
                   font=("Segoe UI", 8), bg=self.colors["secondary_bg"],
@@ -171,14 +212,41 @@ class PreprocessingPanel(tk.Frame):
 
     # ── Image canvas with bbox overlays ────────────────────────────────
     def _build_canvas(self, parent):
-        self.canvas = tk.Canvas(parent, bg="#eef2f7",
-                                highlightthickness=1,
-                                highlightbackground=self.colors["border"])
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        # Mouse-draw bindings
+        canvas_frame = tk.Frame(parent, bg=self.colors["bg_dark"])
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        # Scrollbars
+        self._h_scroll = tk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
+        self._v_scroll = tk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
+        self.canvas = tk.Canvas(
+            canvas_frame, bg="#eef2f7",
+            highlightthickness=1,
+            highlightbackground=self.colors["border"],
+            xscrollcommand=self._h_scroll.set,
+            yscrollcommand=self._v_scroll.set)
+        self._h_scroll.config(command=self.canvas.xview)
+        self._v_scroll.config(command=self.canvas.yview)
+
+        self._v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self._h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Mouse-draw bindings (left button)
         self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+
+        # Mouse-wheel zoom
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)        # Windows / macOS
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)          # Linux scroll up
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)          # Linux scroll down
+
+        # Middle-mouse panning
+        self.canvas.bind("<ButtonPress-2>", self._on_pan_start)
+        self.canvas.bind("<B2-Motion>", self._on_pan_move)
+        # Also support Ctrl+Left-drag as pan (more natural on some setups)
+        self.canvas.bind("<Control-ButtonPress-1>", self._on_pan_start)
+        self.canvas.bind("<Control-B1-Motion>", self._on_pan_move)
 
     # ── Right: Detected BBox Vertical Panel ────────────────────────────
     def _build_bbox_panel(self, parent):
@@ -202,10 +270,16 @@ class PreprocessingPanel(tk.Frame):
             bg=self.colors["secondary_bg"], fg=self.colors["text_light"],
             relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
             command=lambda: self._switch_bbox_tab("lines"))
-        self.btn_tab_lines.pack(side=tk.LEFT)
+        self.btn_tab_lines.pack(side=tk.LEFT, padx=(0, 2))
+        self.btn_tab_chars = tk.Button(
+            tab_bar, text="Chars", font=("Segoe UI", 9),
+            bg=self.colors["secondary_bg"], fg=self.colors["text_light"],
+            relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+            command=lambda: self._switch_bbox_tab("chars"))
+        self.btn_tab_chars.pack(side=tk.LEFT)
 
         # Status counters
-        self.status_var = tk.StringVar(value="Words: 0  |  Lines: 0")
+        self.status_var = tk.StringVar(value="Words: 0  |  Lines: 0  |  Chars: 0")
         tk.Label(parent, textvariable=self.status_var,
                  font=("Segoe UI", 8),
                  bg=self.colors["bg_section"],
@@ -251,22 +325,39 @@ class PreprocessingPanel(tk.Frame):
             tk.Entry(self.word_edit_row, textvariable=var, width=5,
                      font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=1)
 
-        # Line edit row  (Y Start, Y End)
+        # Line edit row  (X1, Y1, X2, Y2)
         self.line_edit_row = tk.Frame(edit_frame, bg=self.colors["bg_section"])
         # (not packed yet — shown when Lines tab active)
-        tk.Label(self.line_edit_row, text="Y Start:",
+        for lbl_text, attr in [("X1", "edit_lx1"), ("Y1", "edit_ly1"),
+                                ("X2", "edit_lx2"), ("Y2", "edit_ly2")]:
+            tk.Label(self.line_edit_row, text=f"{lbl_text}:",
+                     bg=self.colors["bg_section"],
+                     fg=self.colors["text_light"],
+                     font=("Segoe UI", 8)).pack(side=tk.LEFT)
+            var = tk.StringVar()
+            setattr(self, attr, var)
+            tk.Entry(self.line_edit_row, textvariable=var, width=5,
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=1)
+
+        # Char edit row  (X, Y, W, H, Label)
+        self.char_edit_row = tk.Frame(edit_frame, bg=self.colors["bg_section"])
+        # (not packed yet — shown when Chars tab active)
+        for lbl_text, attr in [("X", "edit_cx"), ("Y", "edit_cy"),
+                                ("W", "edit_cw"), ("H", "edit_ch")]:
+            tk.Label(self.char_edit_row, text=f"{lbl_text}:",
+                     bg=self.colors["bg_section"],
+                     fg=self.colors["text_light"],
+                     font=("Segoe UI", 8)).pack(side=tk.LEFT)
+            var = tk.StringVar()
+            setattr(self, attr, var)
+            tk.Entry(self.char_edit_row, textvariable=var, width=5,
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=1)
+        tk.Label(self.char_edit_row, text="Lbl:",
                  bg=self.colors["bg_section"],
                  fg=self.colors["text_light"],
                  font=("Segoe UI", 8)).pack(side=tk.LEFT)
-        self.edit_y1 = tk.StringVar()
-        tk.Entry(self.line_edit_row, textvariable=self.edit_y1, width=6,
-                 font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=1)
-        tk.Label(self.line_edit_row, text="Y End:",
-                 bg=self.colors["bg_section"],
-                 fg=self.colors["text_light"],
-                 font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(4, 0))
-        self.edit_y2 = tk.StringVar()
-        tk.Entry(self.line_edit_row, textvariable=self.edit_y2, width=6,
+        self.edit_clbl = tk.StringVar()
+        tk.Entry(self.char_edit_row, textvariable=self.edit_clbl, width=6,
                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=1)
 
         # Buttons
@@ -317,12 +408,16 @@ class PreprocessingPanel(tk.Frame):
         # Line manual row
         line_row = tk.Frame(inner, bg=self.colors["bg_section"])
         line_row.pack(fill=tk.X, pady=2)
-        tk.Label(line_row, text="Add Line (y_start, y_end):",
+        tk.Label(line_row, text="Add Line (x1, y1, x2, y2):",
                  font=("Segoe UI", 9), bg=self.colors["bg_section"],
                  fg=self.colors["text_light"]).pack(side=tk.LEFT)
-        self.man_ly1 = tk.Entry(line_row, width=6, font=("Segoe UI", 9))
+        self.man_lx1 = tk.Entry(line_row, width=5, font=("Segoe UI", 9))
+        self.man_lx1.pack(side=tk.LEFT, padx=2)
+        self.man_ly1 = tk.Entry(line_row, width=5, font=("Segoe UI", 9))
         self.man_ly1.pack(side=tk.LEFT, padx=2)
-        self.man_ly2 = tk.Entry(line_row, width=6, font=("Segoe UI", 9))
+        self.man_lx2 = tk.Entry(line_row, width=5, font=("Segoe UI", 9))
+        self.man_lx2.pack(side=tk.LEFT, padx=2)
+        self.man_ly2 = tk.Entry(line_row, width=5, font=("Segoe UI", 9))
         self.man_ly2.pack(side=tk.LEFT, padx=2)
         tk.Button(line_row, text="+ Add Line", command=self._add_line_manual,
                   bg="#28a745", fg="white",
@@ -351,6 +446,64 @@ class PreprocessingPanel(tk.Frame):
                        activebackground=self.colors["bg_section"],
                        font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=4)
 
+    # ── Annotation Type Selector ──────────────────────────────────────
+    def _build_annotation_type_panel(self):
+        af = tk.LabelFrame(self, text=" Annotation Type ",
+                           font=("Segoe UI", 10, "bold"),
+                           bg=self.colors["bg_section"],
+                           fg=self.colors["text_light"])
+        af.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+        inner = tk.Frame(af, bg=self.colors["bg_section"])
+        inner.pack(fill=tk.X, padx=10, pady=6)
+
+        tk.Label(inner,
+                 text="Select the annotation level for the next stage."
+                      "  If your images are already cropped, choose the matching level.",
+                 font=("Segoe UI", 9),
+                 bg=self.colors["bg_section"],
+                 fg=self.colors["text_muted"],
+                 wraplength=700, justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
+
+        self._annotation_type_var = tk.StringVar(
+            value=getattr(S, "annotation_type", "word"))
+
+        btn_row = tk.Frame(inner, bg=self.colors["bg_section"])
+        btn_row.pack(fill=tk.X)
+
+        options = [
+            ("Line",      "line",      "#2980b9",
+             "Annotate full text lines"),
+            ("Word",      "word",      "#e67e22",
+             "Annotate individual words"),
+            ("Character", "character", "#8e44ad",
+             "Annotate individual characters"),
+        ]
+
+        for label, value, color, tip in options:
+            rb = tk.Radiobutton(
+                btn_row, text=f"  {label}  ", variable=self._annotation_type_var,
+                value=value,
+                font=("Segoe UI", 10, "bold"),
+                bg=self.colors["bg_section"],
+                fg=self.colors["text_light"],
+                activebackground=self.colors["bg_section"],
+                activeforeground=self.colors["text_light"],
+                selectcolor=color,
+                indicatoron=True,
+                cursor="hand2",
+                command=self._on_annotation_type_change)
+            rb.pack(side=tk.LEFT, padx=(0, 8))
+            tk.Label(btn_row, text=tip,
+                     font=("Segoe UI", 8),
+                     bg=self.colors["bg_section"],
+                     fg=self.colors["text_muted"]).pack(side=tk.LEFT, padx=(0, 16))
+
+    def _on_annotation_type_change(self):
+        chosen = self._annotation_type_var.get()
+        S.annotation_type = chosen
+        self.ctx["annotation_type"] = chosen
+
     # ==================================================================
     # TAB SWITCHING
     # ==================================================================
@@ -358,22 +511,39 @@ class PreprocessingPanel(tk.Frame):
         self._bbox_tab.set(tab)
         accent = self.colors.get("accent", "#007bff")
         sec = self.colors["secondary_bg"]
+        normal_font = ("Segoe UI", 9)
+        bold_font = ("Segoe UI", 9, "bold")
+        # Reset all tabs
+        for btn in (self.btn_tab_words, self.btn_tab_lines, self.btn_tab_chars):
+            btn.config(bg=sec, fg=self.colors["text_light"], font=normal_font)
+        # Hide all edit rows
+        self.word_edit_row.pack_forget()
+        self.line_edit_row.pack_forget()
+        self.char_edit_row.pack_forget()
+        # Activate selected tab
         if tab == "words":
-            self.btn_tab_words.config(bg=accent, fg="white",
-                                      font=("Segoe UI", 9, "bold"))
-            self.btn_tab_lines.config(bg=sec, fg=self.colors["text_light"],
-                                      font=("Segoe UI", 9))
-            self.line_edit_row.pack_forget()
+            self.btn_tab_words.config(bg=accent, fg="white", font=bold_font)
             self.word_edit_row.pack(fill=tk.X, pady=2)
-        else:
-            self.btn_tab_lines.config(bg=accent, fg="white",
-                                      font=("Segoe UI", 9, "bold"))
-            self.btn_tab_words.config(bg=sec, fg=self.colors["text_light"],
-                                      font=("Segoe UI", 9))
-            self.word_edit_row.pack_forget()
+        elif tab == "lines":
+            self.btn_tab_lines.config(bg=accent, fg="white", font=bold_font)
             self.line_edit_row.pack(fill=tk.X, pady=2)
+        else:  # chars
+            self.btn_tab_chars.config(bg=accent, fg="white", font=bold_font)
+            self.char_edit_row.pack(fill=tk.X, pady=2)
         self._refresh_bbox_list()
         self._redraw_image()
+
+    # ==================================================================
+    # HELPER — unpack line tuples (supports legacy 2-tuple & new 4-tuple)
+    # ==================================================================
+    def _unpack_line(self, line_t):
+        """Return (x1, y1, x2, y2) regardless of stored format."""
+        if len(line_t) == 4:
+            return line_t
+        # Legacy (y1, y2) — use full image width
+        y1, y2 = line_t
+        img_w = self._raw_cv_img.shape[1] if self._raw_cv_img is not None else 0
+        return (0, y1, img_w, y2)
 
     # ==================================================================
     # BBOX LIST OPERATIONS
@@ -382,24 +552,34 @@ class PreprocessingPanel(tk.Frame):
         self.bbox_listbox.delete(0, tk.END)
         word_bboxes = getattr(S, "word_bboxes", [])
         det_lines = getattr(S, "detected_lines", [])
+        char_boxes = getattr(S, "char_detected_boxes", [])
         self.status_var.set(
-            f"Words: {len(word_bboxes)}  |  Lines: {len(det_lines)}")
-        if self._bbox_tab.get() == "words":
+            f"Words: {len(word_bboxes)}  |  Lines: {len(det_lines)}  |  Chars: {len(char_boxes)}")
+        tab = self._bbox_tab.get()
+        if tab == "words":
             for i, (x, y, w, h) in enumerate(word_bboxes):
                 self.bbox_listbox.insert(tk.END,
                     f"#{i+1}: ({x}, {y}, {w} x {h})")
-        else:
-            for i, (y1, y2) in enumerate(det_lines):
-                height = y2 - y1
+        elif tab == "lines":
+            for i, line_t in enumerate(det_lines):
+                x1, y1, x2, y2 = self._unpack_line(line_t)
                 self.bbox_listbox.insert(tk.END,
-                    f"Line #{i+1}: Y={y1} -> {y2}  (h={height})")
+                    f"Line #{i+1}: ({x1},{y1})->({x2},{y2})")
+        else:  # chars
+            for i, cinfo in enumerate(char_boxes):
+                coords = cinfo.get("coords", (0, 0, 0, 0))
+                label = cinfo.get("label", "?")
+                score = cinfo.get("score", 0)
+                self.bbox_listbox.insert(tk.END,
+                    f"#{i+1}: '{label}' ({coords[0]},{coords[1]},{coords[2]}x{coords[3]}) {score:.0%}")
 
     def _on_bbox_select(self, _event=None):
         sel = self.bbox_listbox.curselection()
         if not sel:
             return
         idx = sel[0]
-        if self._bbox_tab.get() == "words":
+        tab = self._bbox_tab.get()
+        if tab == "words":
             bboxes = getattr(S, "word_bboxes", [])
             if idx < len(bboxes):
                 x, y, w, h = bboxes[idx]
@@ -407,12 +587,24 @@ class PreprocessingPanel(tk.Frame):
                 self.edit_y.set(str(y))
                 self.edit_w.set(str(w))
                 self.edit_h.set(str(h))
-        else:
+        elif tab == "lines":
             lines = getattr(S, "detected_lines", [])
             if idx < len(lines):
-                y1, y2 = lines[idx]
-                self.edit_y1.set(str(y1))
-                self.edit_y2.set(str(y2))
+                x1, y1, x2, y2 = self._unpack_line(lines[idx])
+                self.edit_lx1.set(str(x1))
+                self.edit_ly1.set(str(y1))
+                self.edit_lx2.set(str(x2))
+                self.edit_ly2.set(str(y2))
+        else:  # chars
+            chars = getattr(S, "char_detected_boxes", [])
+            if idx < len(chars):
+                c = chars[idx]
+                coords = c.get("coords", (0, 0, 0, 0))
+                self.edit_cx.set(str(coords[0]))
+                self.edit_cy.set(str(coords[1]))
+                self.edit_cw.set(str(coords[2]))
+                self.edit_ch.set(str(coords[3]))
+                self.edit_clbl.set(c.get("label", ""))
         self._redraw_image(highlight_idx=idx)
 
     def _update_bbox(self):
@@ -420,8 +612,9 @@ class PreprocessingPanel(tk.Frame):
         if not sel:
             return
         idx = sel[0]
+        tab = self._bbox_tab.get()
         try:
-            if self._bbox_tab.get() == "words":
+            if tab == "words":
                 bboxes = getattr(S, "word_bboxes", [])
                 if idx < len(bboxes):
                     x = int(self.edit_x.get())
@@ -429,12 +622,24 @@ class PreprocessingPanel(tk.Frame):
                     w = int(self.edit_w.get())
                     h = int(self.edit_h.get())
                     S.word_bboxes[idx] = (x, y, w, h)
-            else:
+            elif tab == "lines":
                 lines = getattr(S, "detected_lines", [])
                 if idx < len(lines):
-                    y1 = int(self.edit_y1.get())
-                    y2 = int(self.edit_y2.get())
-                    S.detected_lines[idx] = (y1, y2)
+                    x1 = int(self.edit_lx1.get())
+                    y1 = int(self.edit_ly1.get())
+                    x2 = int(self.edit_lx2.get())
+                    y2 = int(self.edit_ly2.get())
+                    S.detected_lines[idx] = (x1, y1, x2, y2)
+            else:  # chars
+                chars = getattr(S, "char_detected_boxes", [])
+                if idx < len(chars):
+                    cx = int(self.edit_cx.get())
+                    cy = int(self.edit_cy.get())
+                    cw = int(self.edit_cw.get())
+                    ch = int(self.edit_ch.get())
+                    lbl = self.edit_clbl.get().strip()
+                    S.char_detected_boxes[idx]["coords"] = (cx, cy, cw, ch)
+                    S.char_detected_boxes[idx]["label"] = lbl
         except ValueError:
             messagebox.showerror("Error", "Enter valid integer coordinates.")
             return
@@ -447,17 +652,26 @@ class PreprocessingPanel(tk.Frame):
             return
         idx = sel[0]
         tab = self._bbox_tab.get()
-        label = f"word bbox #{idx+1}" if tab == "words" else f"line #{idx+1}"
+        if tab == "words":
+            label = f"word bbox #{idx+1}"
+        elif tab == "lines":
+            label = f"line #{idx+1}"
+        else:
+            label = f"char #{idx+1}"
         if not messagebox.askyesno("Delete", f"Delete {label}?"):
             return
         if tab == "words":
             bboxes = getattr(S, "word_bboxes", [])
             if idx < len(bboxes):
                 S.word_bboxes.pop(idx)
-        else:
+        elif tab == "lines":
             lines = getattr(S, "detected_lines", [])
             if idx < len(lines):
                 S.detected_lines.pop(idx)
+        else:  # chars
+            chars = getattr(S, "char_detected_boxes", [])
+            if idx < len(chars):
+                S.char_detected_boxes.pop(idx)
         self._refresh_bbox_list()
         self._redraw_image()
 
@@ -483,17 +697,19 @@ class PreprocessingPanel(tk.Frame):
 
     def _add_line_manual(self):
         try:
+            x1 = int(self.man_lx1.get())
             y1 = int(self.man_ly1.get())
+            x2 = int(self.man_lx2.get())
             y2 = int(self.man_ly2.get())
         except ValueError:
             messagebox.showerror("Error", "Enter valid integer values.")
             return
         if not hasattr(S, "detected_lines") or S.detected_lines is None:
             S.detected_lines = []
-        S.detected_lines.append((y1, y2))
-        S.detected_lines.sort(key=lambda t: t[0])
-        self.man_ly1.delete(0, tk.END)
-        self.man_ly2.delete(0, tk.END)
+        S.detected_lines.append((x1, y1, x2, y2))
+        S.detected_lines.sort(key=lambda t: t[1])
+        for e in (self.man_lx1, self.man_ly1, self.man_lx2, self.man_ly2):
+            e.delete(0, tk.END)
         self._switch_bbox_tab("lines")
         self._redraw_image()
 
@@ -501,14 +717,19 @@ class PreprocessingPanel(tk.Frame):
     # MOUSE DRAWING ON CANVAS
     # ==================================================================
     def _on_canvas_press(self, event):
-        self._draw_state["start"] = (event.x, event.y)
+        # Ignore if Ctrl is held (used for panning)
+        if event.state & 0x4:
+            return
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+        self._draw_state["start"] = (cx, cy)
         if self.draw_mode_var.get() == "lines":
             self._draw_state["rect"] = self.canvas.create_rectangle(
-                0, event.y, self.canvas.winfo_width(), event.y,
+                0, cy, self.canvas.winfo_width(), cy,
                 outline="blue", width=2, dash=(4, 2))
         else:
             self._draw_state["rect"] = self.canvas.create_rectangle(
-                event.x, event.y, event.x, event.y,
+                cx, cy, cx, cy,
                 outline="blue", width=2, dash=(4, 2))
 
     def _on_canvas_drag(self, event):
@@ -516,12 +737,14 @@ class PreprocessingPanel(tk.Frame):
         s = self._draw_state.get("start")
         if not r or not s:
             return
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
         if self.draw_mode_var.get() == "lines":
-            y1, y2 = s[1], event.y
+            y1, y2 = s[1], cy
             self.canvas.coords(r, 0, min(y1, y2),
                                self.canvas.winfo_width(), max(y1, y2))
         else:
-            self.canvas.coords(r, s[0], s[1], event.x, event.y)
+            self.canvas.coords(r, s[0], s[1], cx, cy)
 
     def _on_canvas_release(self, event):
         r = self._draw_state.get("rect")
@@ -537,21 +760,26 @@ class PreprocessingPanel(tk.Frame):
         if scale == 0:
             return
 
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+
         if self.draw_mode_var.get() == "lines":
-            iy1 = int((min(s[1], event.y) - oy) / scale)
-            iy2 = int((max(s[1], event.y) - oy) / scale)
+            iy1 = int((min(s[1], cy) - oy) / scale)
+            iy2 = int((max(s[1], cy) - oy) / scale)
             if iy2 - iy1 > 5:
                 if not hasattr(S, "detected_lines") or S.detected_lines is None:
                     S.detected_lines = []
-                S.detected_lines.append((iy1, iy2))
-                S.detected_lines.sort(key=lambda t: t[0])
+                # Use full image width for mouse-drawn lines
+                img_h_raw, img_w_raw = self._raw_cv_img.shape[:2] if self._raw_cv_img is not None else (0, 0)
+                S.detected_lines.append((0, iy1, img_w_raw, iy2))
+                S.detected_lines.sort(key=lambda t: t[1])
                 self._switch_bbox_tab("lines")
                 self._redraw_image()
         else:
-            ix1 = int((min(s[0], event.x) - ox) / scale)
-            iy1 = int((min(s[1], event.y) - oy) / scale)
-            ix2 = int((max(s[0], event.x) - ox) / scale)
-            iy2 = int((max(s[1], event.y) - oy) / scale)
+            ix1 = int((min(s[0], cx) - ox) / scale)
+            iy1 = int((min(s[1], cy) - oy) / scale)
+            ix2 = int((max(s[0], cx) - ox) / scale)
+            iy2 = int((max(s[1], cy) - oy) / scale)
             w, h = ix2 - ix1, iy2 - iy1
             if w > 5 and h > 5:
                 if not hasattr(S, "word_bboxes") or S.word_bboxes is None:
@@ -627,48 +855,95 @@ class PreprocessingPanel(tk.Frame):
 
         img_rgb = cv2.cvtColor(self._raw_cv_img, cv2.COLOR_BGR2RGB).copy()
         active_tab = self._bbox_tab.get()
+        pad = getattr(S, "bbox_padding", 0)
+        img_h, img_w = img_rgb.shape[:2]
 
-        # Draw word bboxes
+        # Detection may have run on a scaled copy of the image.
+        # Bbox coordinates are in that scaled space, so map them
+        # back to original-image coordinates before drawing.
+        det_scale = getattr(S, "detection_scale", 1.0)
+        if det_scale == 0:
+            det_scale = 1.0
+
+        # Draw word bboxes (with padding applied visually)
         word_bboxes = getattr(S, "word_bboxes", [])
-        for i, (x, y, w, h) in enumerate(word_bboxes):
-            x, y, w, h = int(x), int(y), int(w), int(h)
+        for i, (bx, by, bw, bh) in enumerate(word_bboxes):
+            # Map from detection space → original image space
+            x = int(bx / det_scale)
+            y = int(by / det_scale)
+            w = int(bw / det_scale)
+            h = int(bh / det_scale)
+            # Apply padding: expand bbox outward, clamp to image bounds
+            px = max(x - pad, 0)
+            py = max(y - pad, 0)
+            px2 = min(x + w + pad, img_w)
+            py2 = min(y + h + pad, img_h)
             if active_tab == "words" and i == highlight_idx:
                 color, thickness = (0, 255, 0), 3
             else:
                 color, thickness = (255, 100, 100), 2
-            cv2.rectangle(img_rgb, (x, y), (x + w, y + h), color, thickness)
-            cv2.putText(img_rgb, f"W{i+1}", (x + 2, y + 15),
+            cv2.rectangle(img_rgb, (px, py), (px2, py2), color, thickness)
+            cv2.putText(img_rgb, f"W{i+1}", (px + 2, py + 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-        # Draw line regions
+        # Draw line regions (with padding applied visually)
         det_lines = getattr(S, "detected_lines", [])
-        img_h, img_w = img_rgb.shape[:2]
-        for i, (y1, y2) in enumerate(det_lines):
-            y1, y2 = int(y1), int(y2)
+        for i, line_t in enumerate(det_lines):
+            lx1, ly1, lx2, ly2 = self._unpack_line(line_t)
+            # Map from detection space → original image space
+            x1 = int(lx1 / det_scale)
+            y1 = int(ly1 / det_scale)
+            x2 = int(lx2 / det_scale)
+            y2 = int(ly2 / det_scale)
+            # Apply padding: expand line region, clamp to image bounds
+            px1 = max(x1 - pad, 0)
+            py1 = max(y1 - pad, 0)
+            px2 = min(x2 + pad, img_w)
+            py2 = min(y2 + pad, img_h)
             if active_tab == "lines" and i == highlight_idx:
                 color, thickness = (0, 255, 0), 3
             else:
                 color, thickness = (30, 144, 255), 2
-            cv2.rectangle(img_rgb, (0, y1), (img_w, y2), color, thickness)
-            cv2.putText(img_rgb, f"L{i+1}", (5, y1 + 18),
+            cv2.rectangle(img_rgb, (px1, py1), (px2, py2), color, thickness)
+            cv2.putText(img_rgb, f"L{i+1}", (px1 + 5, py1 + 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        # Resize to fit canvas
+        # Draw character bboxes
+        char_boxes = getattr(S, "char_detected_boxes", [])
+        for i, cinfo in enumerate(char_boxes):
+            coords = cinfo.get("coords", (0, 0, 0, 0))
+            cx, cy, cw, ch = coords
+            if active_tab == "chars" and i == highlight_idx:
+                color, thickness = (0, 255, 0), 3
+            else:
+                color, thickness = (180, 0, 255), 2
+            cv2.rectangle(img_rgb, (int(cx), int(cy)),
+                          (int(cx + cw), int(cy + ch)), color, thickness)
+            label = cinfo.get("label", "")
+            cv2.putText(img_rgb, label, (int(cx), max(int(cy) - 3, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+        # Resize to fit canvas, applying viewport zoom
         self.canvas.update_idletasks()
         cw = max(self.canvas.winfo_width(), 300)
         ch = max(self.canvas.winfo_height(), 300)
-        scale = min(cw / img_w, ch / img_h, 1.0)
+        fit_scale = min(cw / img_w, ch / img_h, 1.0)
+        scale = fit_scale * self._view_zoom
         new_w, new_h = int(img_w * scale), int(img_h * scale)
 
-        resized = cv2.resize(img_rgb, (new_w, new_h),
-                             interpolation=cv2.INTER_AREA)
+        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        resized = cv2.resize(img_rgb, (new_w, new_h), interpolation=interp)
         pil_img = Image.fromarray(resized)
         self.preview_photo = ImageTk.PhotoImage(pil_img)
 
-        x_off = (cw - new_w) // 2
-        y_off = (ch - new_h) // 2
+        x_off = max((cw - new_w) // 2, 0)
+        y_off = max((ch - new_h) // 2, 0)
         self.canvas.create_image(x_off, y_off, anchor=tk.NW,
                                  image=self.preview_photo)
+        # Update scrollregion so the canvas can scroll when zoomed in
+        sr_w = max(cw, new_w + x_off * 2)
+        sr_h = max(ch, new_h + y_off * 2)
+        self.canvas.config(scrollregion=(0, 0, sr_w, sr_h))
 
         self._canvas_scale = scale
         self._canvas_offset = (x_off, y_off)
@@ -747,6 +1022,31 @@ class PreprocessingPanel(tk.Frame):
         self._switch_bbox_tab("lines")
         self._load_current_image()
 
+    def _detect_characters(self):
+        """Run character detection via the main engine.
+        Works on word images when available, otherwise on the input image."""
+        if not self._ensure_images_ready():
+            return
+        self.mode_var.set("Character Detection")
+        self.btn_char.config(state=tk.DISABLED, text="Detecting...")
+        self.update_idletasks()
+        try:
+            func = getattr(S, "_workflow_detect_chars", None)
+            if func:
+                func()
+            else:
+                messagebox.showinfo(
+                    "Character Detection",
+                    "Character detection engine not available.")
+        except Exception as e:
+            messagebox.showerror("Detection Error", str(e))
+            import traceback; traceback.print_exc()
+        finally:
+            self.btn_char.config(state=tk.NORMAL, text="Detect Characters")
+        self._restore_workflow_view()
+        self._switch_bbox_tab("chars")
+        self._load_current_image()
+
     def _restore_workflow_view(self):
         """Make sure the workflow container stays visible after detection
         (undo any pack_forget that the core detection code may have done)."""
@@ -764,9 +1064,61 @@ class PreprocessingPanel(tk.Frame):
     # ==================================================================
     def _on_scale_change(self, val):
         S.image_scale = float(val)
+        self._redraw_image()
 
     def _on_padding_change(self, val):
         S.bbox_padding = int(float(val))
+        self._redraw_image()
+
+    # ==================================================================
+    # VIEWPORT ZOOM & PAN
+    # ==================================================================
+    _ZOOM_LEVELS = [0.25, 0.33, 0.5, 0.67, 0.75, 1.0, 1.25, 1.5,
+                    2.0, 2.5, 3.0, 4.0, 5.0]
+
+    def _update_zoom_label(self):
+        pct = int(round(self._view_zoom * 100))
+        self._zoom_var.set(f"{pct}%")
+
+    def _zoom_in(self):
+        for z in self._ZOOM_LEVELS:
+            if z > self._view_zoom + 0.01:
+                self._view_zoom = z
+                break
+        else:
+            self._view_zoom = self._ZOOM_LEVELS[-1]
+        self._update_zoom_label()
+        self._redraw_image()
+
+    def _zoom_out(self):
+        for z in reversed(self._ZOOM_LEVELS):
+            if z < self._view_zoom - 0.01:
+                self._view_zoom = z
+                break
+        else:
+            self._view_zoom = self._ZOOM_LEVELS[0]
+        self._update_zoom_label()
+        self._redraw_image()
+
+    def _zoom_fit(self):
+        self._view_zoom = 1.0
+        self._update_zoom_label()
+        self._redraw_image()
+
+    def _on_mouse_wheel(self, event):
+        # Determine scroll direction
+        if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
+            self._zoom_in()
+        elif event.num == 5 or (hasattr(event, 'delta') and event.delta < 0):
+            self._zoom_out()
+
+    def _on_pan_start(self, event):
+        self.canvas.scan_mark(event.x, event.y)
+        return "break"   # prevent left-button draw when Ctrl held
+
+    def _on_pan_move(self, event):
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        return "break"
 
     # ==================================================================
     # FULL REFRESH
@@ -777,4 +1129,11 @@ class PreprocessingPanel(tk.Frame):
     def refresh(self, ctx):
         """Called when returning to this step."""
         self.ctx = ctx
+        # Sync annotation type from context or state
+        ann_type = ctx.get("annotation_type",
+                           getattr(S, "annotation_type", "word"))
+        if hasattr(self, "_annotation_type_var"):
+            self._annotation_type_var.set(ann_type)
+        S.annotation_type = ann_type
+        ctx["annotation_type"] = ann_type
         self._load_current_image()

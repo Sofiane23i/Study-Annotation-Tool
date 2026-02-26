@@ -18,7 +18,8 @@ import state as S
 
 def detect_text_lines(img_gray, min_line_height=15, merge_gap=10):
     """
-    Detect text lines using horizontal projection profile.
+    Detect text lines using horizontal projection profile,
+    with tight left/right content boundaries per line.
     
     Args:
         img_gray: Grayscale numpy array of the image
@@ -26,11 +27,14 @@ def detect_text_lines(img_gray, min_line_height=15, merge_gap=10):
         merge_gap: Maximum gap between lines to merge them
         
     Returns:
-        List of (y_start, y_end) tuples representing line boundaries
+        List of (x_start, y_start, x_end, y_end) tuples representing
+        tight line bounding boxes.
     """
     # Binarize image (dark text on light background)
     _, binary = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
+    img_h, img_w = binary.shape[:2]
+
     # Calculate horizontal projection (sum of white pixels per row)
     projection = np.sum(binary, axis=1)
     
@@ -55,8 +59,8 @@ def detect_text_lines(img_gray, min_line_height=15, merge_gap=10):
             start = None
     
     # Handle case where line extends to bottom
-    if start is not None and len(img_gray) - start >= min_line_height:
-        lines.append((start, len(img_gray)))
+    if start is not None and img_h - start >= min_line_height:
+        lines.append((start, img_h))
     
     # Merge close lines
     merged_lines = []
@@ -66,8 +70,22 @@ def detect_text_lines(img_gray, min_line_height=15, merge_gap=10):
             merged_lines[-1] = (merged_lines[-1][0], line[1])
         else:
             merged_lines.append(line)
-    
-    return merged_lines
+
+    # For each line, find tight left/right content boundaries
+    result = []
+    for (y1, y2) in merged_lines:
+        strip = binary[y1:y2, :]
+        # Vertical projection of this strip to find x-extent of content
+        v_proj = np.sum(strip, axis=0)
+        nonzero = np.where(v_proj > 0)[0]
+        if len(nonzero) > 0:
+            x1 = int(nonzero[0])
+            x2 = int(nonzero[-1]) + 1  # exclusive end → inclusive pixel + 1
+        else:
+            x1, x2 = 0, img_w
+        result.append((x1, y1, x2, y2))
+
+    return result
 
 
 def detect_words_in_line(img_gray, y_start, y_end, min_word_width=10, word_gap=15):
@@ -134,13 +152,16 @@ def segment_line_into_words(img_gray, line_bbox, padding=2):
     
     Args:
         img_gray: Full grayscale image
-        line_bbox: (y_start, y_end) of the line
+        line_bbox: (x1, y1, x2, y2) or legacy (y_start, y_end) of the line
         padding: Padding to add around word boxes
         
     Returns:
         List of (x, y, w, h) word bounding boxes
     """
-    y_start, y_end = line_bbox
+    if len(line_bbox) == 4:
+        _x1, y_start, _x2, y_end = line_bbox
+    else:
+        y_start, y_end = line_bbox
     words = detect_words_in_line(img_gray, y_start, y_end)
     
     word_boxes = []
@@ -357,21 +378,28 @@ class LineAnnotationWindow:
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
         
         # Draw line boxes
-        for idx, (y_start, y_end) in enumerate(self.lines):
+        for idx, line_t in enumerate(self.lines):
+            if len(line_t) == 4:
+                x_start, y_start, x_end, y_end = line_t
+            else:
+                y_start, y_end = line_t
+                x_start, x_end = 0, self.original_img.width
             color = 'lime' if idx == self.current_line_idx else 'blue'
             width = 3 if idx == self.current_line_idx else 2
             
-            y1 = int(y_start * self.display_scale)
-            y2 = int(y_end * self.display_scale)
+            lx1 = int(x_start * self.display_scale)
+            ly1 = int(y_start * self.display_scale)
+            lx2 = int(x_end * self.display_scale)
+            ly2 = int(y_end * self.display_scale)
             
             self.canvas.create_rectangle(
-                0, y1, new_w, y2,
+                lx1, ly1, lx2, ly2,
                 outline=color, width=width
             )
             
             # Line number label
             self.canvas.create_text(
-                5, y1 + 5,
+                lx1 + 5, ly1 + 5,
                 anchor=tk.NW,
                 text=f"L{idx + 1}",
                 fill=color,
@@ -430,7 +458,11 @@ class LineAnnotationWindow:
         
         # Update listbox
         self.line_listbox.delete(0, tk.END)
-        for idx, (y_start, y_end) in enumerate(self.lines):
+        for idx, line_t in enumerate(self.lines):
+            if len(line_t) == 4:
+                _x1, y_start, _x2, y_end = line_t
+            else:
+                y_start, y_end = line_t
             word_count = len(self.line_words.get(idx, []))
             has_text = "✓" if idx in self.line_texts and self.line_texts[idx] else " "
             self.line_listbox.insert(tk.END, f"[{has_text}] Line {idx + 1}: y={y_start}-{y_end}, {word_count} words")
@@ -572,7 +604,11 @@ class LineAnnotationWindow:
         try:
             with open(save_path, 'w', encoding='utf-8') as f:
                 word_idx = 0
-                for line_idx, (y_start, y_end) in enumerate(self.lines):
+                for line_idx, line_t in enumerate(self.lines):
+                    if len(line_t) == 4:
+                        _x1, y_start, _x2, y_end = line_t
+                    else:
+                        y_start, y_end = line_t
                     text = self.line_texts.get(line_idx, '')
                     words = text.split() if text else []
                     word_boxes = self.line_words.get(line_idx, [])
@@ -613,14 +649,20 @@ class LineAnnotationWindow:
                 'lines': []
             }
             
-            for line_idx, (y_start, y_end) in enumerate(self.lines):
+            for line_idx, line_t in enumerate(self.lines):
+                if len(line_t) == 4:
+                    lx1, y_start, lx2, y_end = line_t
+                else:
+                    y_start, y_end = line_t
+                    lx1 = 0
+                    lx2 = self.original_img.width if self.original_img else 0
                 text = self.line_texts.get(line_idx, '')
                 words = text.split() if text else []
                 word_boxes = self.line_words.get(line_idx, [])
                 
                 line_data = {
                     'line_id': line_idx,
-                    'bbox': [0, y_start, self.original_img.width if self.original_img else 0, y_end - y_start],
+                    'bbox': [lx1, y_start, lx2 - lx1, y_end - y_start],
                     'text': text,
                     'words': []
                 }
@@ -657,14 +699,17 @@ def line_annotate():
         import glob
         batch_dir = os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch')
         batch_dir = os.path.abspath(batch_dir)
-        jpgs = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
-        if jpgs:
+        batch_imgs = []
+        for ext in ('*.jpg', '*.jpeg', '*.png', '*.bmp'):
+            batch_imgs.extend(glob.glob(os.path.join(batch_dir, ext)))
+        batch_imgs.sort()
+        if batch_imgs:
             # Use the currently selected batch image
             batch_idx = getattr(S, 'gan_batch_index', 0)
-            if 0 <= batch_idx < len(jpgs):
-                image_path = jpgs[batch_idx]
+            if 0 <= batch_idx < len(batch_imgs):
+                image_path = batch_imgs[batch_idx]
             else:
-                image_path = jpgs[0]
+                image_path = batch_imgs[0]
             print(f"Line annotation using GAN batch image: {image_path}")
     
     # Priority 3: temp_handwriting.jpg fallback
@@ -753,7 +798,12 @@ def start_embedded_line_annotation(image_path, detected_lines, text_lines=None):
              font=('Segoe UI', 12, 'bold'), bg='#6cb6ff', fg='white').pack(side=tk.LEFT)
     
     # Create annotation entry for each line
-    for i, (y_start, y_end) in enumerate(detected_lines):
+    for i, line_t in enumerate(detected_lines):
+        if len(line_t) == 4:
+            x_start, y_start, x_end, y_end = line_t
+        else:
+            y_start, y_end = line_t
+            x_start, x_end = 0, img_width
         line_frame = tk.Frame(scroll_frame, bg='white', relief=tk.RIDGE, bd=1)
         line_frame.pack(fill=tk.X, padx=10, pady=5)
         
@@ -762,7 +812,7 @@ def start_embedded_line_annotation(image_path, detected_lines, text_lines=None):
                  bg='white', fg='#333').pack(anchor='w', padx=10, pady=(8, 2))
         
         # Crop the line from image
-        line_crop = original_img.crop((0, y_start, img_width, y_end))
+        line_crop = original_img.crop((x_start, y_start, x_end, y_end))
         
         # Resize for display (max width 600px, preserve aspect ratio)
         crop_w, crop_h = line_crop.size

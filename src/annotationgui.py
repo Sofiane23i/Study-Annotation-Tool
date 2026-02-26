@@ -374,9 +374,8 @@ def back_to_detection_from_annotation():
         if widget_exists(S.line_detect_container):
             S.line_detect_container.pack(expand=True, fill=tk.BOTH)
     elif mode == 'character':
-        # Only re-enable character detection button if word images exist
-        word_image_paths = getattr(S, 'word_image_paths', [])
-        if widget_exists(S.btn_char_detect) and word_image_paths:
+        # Re-enable character detection button
+        if widget_exists(S.btn_char_detect):
             S.btn_char_detect.config(state='normal')
         # Show character detection container
         if widget_exists(S.char_detect_container):
@@ -536,17 +535,8 @@ def set_segmentation_mode(mode):
                 btn_line_detect.config(state='disabled')
             if widget_exists(btn_save):
                 btn_save.config(state='disabled')
-            # Only enable char detect if word images exist
             if widget_exists(btn_char_detect):
-                word_image_paths = getattr(S, 'word_image_paths', [])
-                if word_image_paths:
-                    btn_char_detect.config(state='normal')
-                else:
-                    from tkinter import messagebox
-                    messagebox.showinfo("Words Required", 
-                                        "Please run word detection first.\n"
-                                        "Character detection works on individual word images.")
-                    return False
+                btn_char_detect.config(state='normal')
         segmentation_mode_var.set(f"Segmentation mode: {mode.title()} (locked for remaining images)")
         S.auto_detect_on_navigation = True
     elif S.segmentation_mode != mode:
@@ -777,6 +767,14 @@ def detect_lines_with_autofill():
         import traceback
         traceback.print_exc()
 
+def _unpack_line(line_t, img=None):
+    """Unpack a line tuple to (x1, y1, x2, y2) regardless of format."""
+    if len(line_t) == 4:
+        return line_t
+    y1, y2 = line_t
+    img_w = img.shape[1] if img is not None else 0
+    return (0, y1, img_w, y2)
+
 def display_detected_lines(img, lines, highlight_idx=None):
     """Display image with detected lines on the line detection canvas."""
     if not hasattr(S, 'line_detect_canvas'):
@@ -793,15 +791,16 @@ def display_detected_lines(img, lines, highlight_idx=None):
     img_with_lines = img_rgb.copy()
     
     # Draw rectangles around detected lines
-    for i, (y_start, y_end) in enumerate(lines):
+    for i, line_t in enumerate(lines):
+        x1, y_start, x2, y_end = _unpack_line(line_t, img)
         if i == highlight_idx:
             color = (0, 255, 0)  # Green for selected
             thickness = 3
         else:
             color = (30, 144, 255)
             thickness = 2
-        cv2.rectangle(img_with_lines, (0, y_start), (img.shape[1], y_end), color, thickness)
-        cv2.putText(img_with_lines, f"Line {i+1}", (5, y_start + 20), 
+        cv2.rectangle(img_with_lines, (x1, y_start), (x2, y_end), color, thickness)
+        cv2.putText(img_with_lines, f"Line {i+1}", (x1 + 5, y_start + 20), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     
     # Resize for display
@@ -937,11 +936,8 @@ def detect_words_with_mode_lock():
                 btn_line_detect.config(state='normal')
             if widget_exists(btn_save):
                 btn_save.config(state='normal')
-            # Only enable char detect if word images exist
             if widget_exists(btn_char_detect):
-                word_image_paths = getattr(S, 'word_image_paths', [])
-                if word_image_paths:
-                    btn_char_detect.config(state='normal')
+                btn_char_detect.config(state='normal')
             return
     if widget_exists(S.annotation_container):
         S.annotation_container.pack_forget()
@@ -968,7 +964,9 @@ btn_save = create_styled_button(word_row, "🎯 Detect Words", detect_words_with
 btn_save.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 def detect_characters():
-    """Detect characters on word images (requires word detection first)."""
+    """Detect characters via template matching on the current image.
+    Works on word images if word detection has been run, otherwise
+    operates directly on the full input image."""
     from tkinter import messagebox
     import json
     from utils import match_template_in_image
@@ -976,29 +974,29 @@ def detect_characters():
     if not ensure_images_available():
         return
     
-    # Check if word detection has been performed
+    # Build the list of images to process for character detection.
+    # Priority: word images from detection > full input image(s)
     word_image_paths = getattr(S, 'word_image_paths', [])
-    word_bboxes = getattr(S, 'word_bboxes', [])
     
-    if not word_image_paths and not word_bboxes:
-        messagebox.showwarning("Words Required", 
-                               "Please run word detection first.\n\n"
-                               "Character detection works on individual word images\n"
-                               "to improve accuracy.")
-        return
-    
-    # If we have word images from directoryout, use those
     if not word_image_paths and hasattr(S, 'directoryout') and os.path.exists(S.directoryout):
         import glob
         word_files = sorted(glob.glob(os.path.join(S.directoryout, '*.png')),
                            key=lambda x: int(os.path.splitext(os.path.basename(x))[0]) if os.path.splitext(os.path.basename(x))[0].isdigit() else 0)
-        word_image_paths = word_files
-        S.word_image_paths = word_files
+        if word_files:
+            word_image_paths = word_files
+            S.word_image_paths = word_files
     
+    # Fallback: use the current input image directly
     if not word_image_paths:
-        messagebox.showwarning("No Word Images", 
-                               "No word images found. Please run word detection first.")
-        return
+        input_path = None
+        if S.list_of_files and len(S.list_of_files) > S.pos:
+            input_path = S.list_of_files[S.pos]
+        if not input_path or not os.path.exists(input_path):
+            messagebox.showwarning("No Image",
+                                   "No image available for character detection.")
+            return
+        word_image_paths = [input_path]
+        S.word_image_paths = word_image_paths
     
     # Disable other detection buttons
     disable_other_detection_buttons('character')
@@ -1021,7 +1019,7 @@ def detect_characters():
     if os.path.exists(templates_dir):
         # Load all template images
         for fname in os.listdir(templates_dir):
-            if fname.endswith(('.png', '.jpg')):
+            if fname.endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
                 char_label = os.path.splitext(fname)[0]  # filename without extension is the label
                 template_path = os.path.join(templates_dir, fname)
                 S.char_templates.append({'label': char_label, 'path': template_path})
@@ -1216,7 +1214,6 @@ char_row = tk.Frame(section2, bg=COLORS['bg_section'])
 char_row.pack(fill=tk.X, pady=3)
 btn_char_detect = create_styled_button(char_row, "🔤 Detect Chars", detect_characters, 'warning', width=18)
 btn_char_detect.pack(side=tk.LEFT, fill=tk.X, expand=True)
-btn_char_detect.config(state='disabled')  # Disabled until word detection is done
 
 # Detection parameters frame
 params_frame = tk.Frame(section2, bg=COLORS['bg_section'])
@@ -1274,11 +1271,7 @@ def update_detection_visibility():
             # Enable line and word detection buttons
             btn_line_detect.config(state='normal')
             btn_save.config(state='normal')
-            # Only enable char detect if word images exist
-            if word_image_paths:
-                btn_char_detect.config(state='normal')
-            else:
-                btn_char_detect.config(state='disabled')
+            btn_char_detect.config(state='normal')
             scale_slider.config(state='normal')
             padding_slider.config(state='normal')
             
@@ -1700,13 +1693,8 @@ def back_to_image_view():
         btn_save.config(state='normal')
     if widget_exists(btn_line_detect):
         btn_line_detect.config(state='normal')
-    # Only enable char detect if word images exist
     if widget_exists(btn_char_detect):
-        word_image_paths = getattr(S, 'word_image_paths', [])
-        if word_image_paths:
-            btn_char_detect.config(state='normal')
-        else:
-            btn_char_detect.config(state='disabled')
+        btn_char_detect.config(state='normal')
     # Reset segmentation mode to allow switching
     S.segmentation_mode = None
     segmentation_mode_var.set("Segmentation mode: Not selected")
@@ -1820,7 +1808,9 @@ def update_line_bbox():
     idx = sel[0]
     try:
         y1, y2 = int(line_y1_var.get()), int(line_y2_var.get())
-        S.detected_lines[idx] = (y1, y2)
+        old = S.detected_lines[idx]
+        x1, _, x2, _ = _unpack_line(old)
+        S.detected_lines[idx] = (x1, y1, x2, y2)
         refresh_line_bbox_list()
         redraw_line_detection()
     except ValueError:
@@ -1848,7 +1838,7 @@ def on_line_bbox_select(event):
     if not sel or not hasattr(S, 'detected_lines'):
         return
     idx = sel[0]
-    y1, y2 = S.detected_lines[idx]
+    x1, y1, x2, y2 = _unpack_line(S.detected_lines[idx])
     line_y1_var.set(str(y1))
     line_y2_var.set(str(y2))
     redraw_line_detection(highlight_idx=idx)
@@ -1859,9 +1849,9 @@ def refresh_line_bbox_list():
     """Refresh the line bbox listbox."""
     line_bbox_listbox.delete(0, tk.END)
     if hasattr(S, 'detected_lines'):
-        for i, (y1, y2) in enumerate(S.detected_lines):
-            height = y2 - y1
-            line_bbox_listbox.insert(tk.END, f"Line #{i+1}: Y={y1}→{y2} (h={height})")
+        for i, line_t in enumerate(S.detected_lines):
+            x1, y1, x2, y2 = _unpack_line(line_t)
+            line_bbox_listbox.insert(tk.END, f"Line #{i+1}: ({x1},{y1})→({x2},{y2})")
 
 line_info_label = tk.Label(line_right_panel, text="",
                            font=('Segoe UI', 9), bg=COLORS['bg_section'], fg=COLORS['text_light'],
@@ -1892,9 +1882,11 @@ def add_line_bbox_manual():
         y2 = int(line_manual_y2.get())
         if not hasattr(S, 'detected_lines'):
             S.detected_lines = []
-        S.detected_lines.append((y1, y2))
+        # Use full image width for manually added lines
+        img_w = S.line_display_img.shape[1] if hasattr(S, 'line_display_img') and S.line_display_img is not None else 0
+        S.detected_lines.append((0, y1, img_w, y2))
         # Sort lines by y1
-        S.detected_lines.sort(key=lambda x: x[0])
+        S.detected_lines.sort(key=lambda x: x[1] if len(x) == 4 else x[0])
         refresh_line_bbox_list()
         redraw_line_detection()
         line_manual_y1.delete(0, tk.END)
@@ -1940,8 +1932,10 @@ def on_line_canvas_release(event):
         if iy2 - iy1 > 5:
             if not hasattr(S, 'detected_lines'):
                 S.detected_lines = []
-            S.detected_lines.append((iy1, iy2))
-            S.detected_lines.sort(key=lambda x: x[0])
+            # Use full image width for mouse-drawn lines
+            img_w = S.line_display_img.shape[1] if hasattr(S, 'line_display_img') and S.line_display_img is not None else 0
+            S.detected_lines.append((0, iy1, img_w, iy2))
+            S.detected_lines.sort(key=lambda x: x[1] if len(x) == 4 else x[0])
             refresh_line_bbox_list()
             redraw_line_detection()
 
@@ -1970,13 +1964,8 @@ def back_to_image_view_from_line():
         btn_save.config(state='normal')
     if widget_exists(btn_line_detect):
         btn_line_detect.config(state='normal')
-    # Only enable char detect if word images exist
     if widget_exists(btn_char_detect):
-        word_image_paths = getattr(S, 'word_image_paths', [])
-        if word_image_paths:
-            btn_char_detect.config(state='normal')
-        else:
-            btn_char_detect.config(state='disabled')
+        btn_char_detect.config(state='normal')
     # Reset segmentation mode to allow switching
     S.segmentation_mode = None
     segmentation_mode_var.set("Segmentation mode: Not selected")
@@ -2499,13 +2488,8 @@ def back_to_image_view_from_char():
         btn_save.config(state='normal')
     if widget_exists(btn_line_detect):
         btn_line_detect.config(state='normal')
-    # Only enable char detect if word images exist
     if widget_exists(btn_char_detect):
-        word_image_paths = getattr(S, 'word_image_paths', [])
-        if word_image_paths:
-            btn_char_detect.config(state='normal')
-        else:
-            btn_char_detect.config(state='disabled')
+        btn_char_detect.config(state='normal')
     # Reset segmentation mode to allow switching
     S.segmentation_mode = None
     segmentation_mode_var.set("Segmentation mode: Not selected")

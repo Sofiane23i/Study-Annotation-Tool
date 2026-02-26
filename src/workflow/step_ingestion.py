@@ -1182,13 +1182,6 @@ class IngestionPanel(tk.Frame):
     def _detect_chars(self):
         if not self._ensure_images_ready():
             return
-        word_paths = getattr(S, "word_image_paths", [])
-        if not word_paths:
-            messagebox.showwarning(
-                "Words Required",
-                "Please run Word Detection first.\n"
-                "Character detection works on detected word images.")
-            return
         func = getattr(S, "_workflow_detect_chars", None)
         if func:
             func()

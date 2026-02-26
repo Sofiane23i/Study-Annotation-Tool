@@ -381,7 +381,7 @@ class HomePanel:
                             })
                             
                             # Try to find corresponding image
-                            for ext in ['.png', '.jpg', '.jpeg']:
+                            for ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
                                 img_path = os.path.join(self.current_folder, 'batch', f"{img_id}{ext}")
                                 if os.path.exists(img_path):
                                     self.preview_images[i] = img_path

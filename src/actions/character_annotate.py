@@ -360,7 +360,10 @@ def character_annotate():
     if not full_img_path:
         import glob
         batch_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'batch'))
-        batch_jpgs = sorted(glob.glob(os.path.join(batch_dir, '*.jpg')))
+        batch_jpgs = sorted(
+            f for ext in ('*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff')
+            for f in glob.glob(os.path.join(batch_dir, ext))
+        )
         if batch_jpgs:
             # Use first batch image or the one selected in GAN preview
             batch_idx = getattr(S, 'gan_batch_index', 0)
