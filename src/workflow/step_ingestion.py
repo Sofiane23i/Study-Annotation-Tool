@@ -303,12 +303,46 @@ class IngestionPanel(tk.Frame):
     def _goto_analysis(self):
         """Jump directly to the Statistical Analysis step."""
         wm = getattr(S, "workflow_manager", None)
-        if wm:
-            wm.step_states["ingestion"] = "completed"
-            wm._show_step(3)  # Analysis step (index 3)
-        else:
+        if not wm:
             messagebox.showinfo("Statistical Analysis",
                                 "Workflow manager not available.")
+            return
+
+        # If an Annotation panel exists, prefer to auto-save current annotations
+        ann_panel = wm.step_panels.get('annotation') if hasattr(wm, 'step_panels') else None
+        if ann_panel:
+            try:
+                # Collect and save annotations automatically if at least one annotated item exists
+                data, total, mode = ann_panel._collect_annotations_data()
+                if total > 0:
+                    # Save to default path in dataset folder
+                    base_dir = getattr(S, 'pathDirectory', None) or self.ctx.get('image_dir') or os.getcwd()
+                    # if base_dir points to gan_output_data already we use that
+                    if os.path.basename(base_dir) == 'gan_output_data':
+                        target_dir = base_dir
+                    else:
+                        target_dir = base_dir
+                    os.makedirs(target_dir, exist_ok=True)
+                    save_path = os.path.join(target_dir, 'annotations_auto.json')
+                    saved = ann_panel.save_annotations_to_path(save_path, mode=mode, show_message=False)
+                    if saved:
+                        # Update ingestion context
+                        self.ctx['annotation_file'] = save_path
+                        self.ctx['annotations'] = data
+                        self.ctx['metadata']['has_annotations'] = True
+                        self.ann_card_info.set(f"✅ annotations_auto.json ({total} entries)")
+                else:
+                    # No annotations in panel — warn user
+                    messagebox.showwarning("No Annotations",
+                                           "At least one image must be annotated before statistical analysis.")
+                    return
+            except Exception:
+                # If any error occurs, fall back to existing ctx annotations check
+                pass
+
+        # Proceed to Analysis
+        wm.step_states["ingestion"] = "completed"
+        wm._show_step(3)  # Analysis step (index 3)
 
     def _goto_preprocessing(self):
         """Jump to the Preprocessing step."""

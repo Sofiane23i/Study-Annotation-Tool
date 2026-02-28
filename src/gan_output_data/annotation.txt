@@ -1,2 +1,4 @@
-21125 ok X 462 128 552 151 X Sofiane
-21126 ok X 610 131 667 151 X HTR
+# Generated annotation file
+batch_1_973fbc.jpg sofiane qassim university
+batch_1_973fbc.jpg sofiane qassim university
+batch_1_973fbc.jpg sofiane qassim university

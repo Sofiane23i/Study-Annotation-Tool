@@ -974,6 +974,15 @@ class PreprocessingPanel(tk.Frame):
         for i, cinfo in enumerate(char_boxes):
             coords = cinfo.get("coords", (0, 0, 0, 0))
             cx, cy, cw, ch = coords
+            # Map character coords from detection space to original image space
+            try:
+                cx = int(cx / det_scale)
+                cy = int(cy / det_scale)
+                cw = int(cw / det_scale)
+                ch = int(ch / det_scale)
+            except Exception:
+                # fallback to original values if det_scale invalid
+                cx, cy, cw, ch = int(cx), int(cy), int(cw), int(ch)
             if active_tab == "chars" and i == highlight_idx:
                 color, thickness = (0, 255, 0), 3
             else:

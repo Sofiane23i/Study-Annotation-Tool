@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-26T22:24:31.768394",
+  "timestamp": "2026-02-28T15:25:21.335135",
   "pos": 0,
-  "nbr": 21125,
+  "nbr": 21134,
   "nbrout": 341,
   "ind2": 21125,
   "text_direction": "ltr",
   "export_format": "iam",
-  "image_scale": 0.9,
+  "image_scale": 0.7,
   "bbox_padding": 0
 }

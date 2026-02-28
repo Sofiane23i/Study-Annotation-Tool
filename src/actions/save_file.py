@@ -57,7 +57,13 @@ def save_file():
     
     # Create temp directories if not already set up
     if not S.directorytmp or not os.path.exists(S.directorytmp):
-        base_dir = os.path.join(os.path.dirname(__file__), '..', 'gan_output_data')
+        # choose base relative to pathDirectory if available
+        base_dir = getattr(S, 'pathDirectory', None)
+        if not base_dir:
+            base_dir = os.path.join(os.path.dirname(__file__), '..', 'gan_output_data')
+        # avoid double gan_output_data
+        if os.path.basename(base_dir) != 'gan_output_data':
+            base_dir = os.path.join(base_dir, 'gan_output_data')
         S.directorytmp = os.path.abspath(os.path.join(base_dir, 'tmp'))
         S.directoryout = os.path.abspath(os.path.join(base_dir, 'out'))
         os.makedirs(S.directorytmp, exist_ok=True)
@@ -238,7 +244,9 @@ def save_file():
             boxes.append([x, y, x + w, y + h])
         perform_cropping(boxes)
     
-    S.perform_cropping_current_detection = perform_cropping_from_bboxes
+
+    # Actually perform cropping and save word crops to out directory
+    perform_cropping_from_bboxes()
 
     files = glob.glob(S.directorytmp + '/*')
     for f in files:

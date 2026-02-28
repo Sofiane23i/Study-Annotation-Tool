@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Dict, Any
 import threading
+from PIL import Image
 
 # Reuse the existing CorpusAnalyzer
 from corpus_stats import CorpusAnalyzer
@@ -104,9 +105,135 @@ class AnalysisPanel(tk.Frame):
 
         def worker():
             stats = {}
-            has_ann = self.ctx["metadata"].get("has_annotations", False)
             folder = self.ctx.get("image_dir", "")
             ann_file = self.ctx.get("annotation_file")
+            # treat existence of an annotation file as having annotations
+            has_ann = self.ctx["metadata"].get("has_annotations", False) or bool(ann_file and os.path.isfile(ann_file))
+
+            # Ensure crops are available per-image for any annotated folder.
+            # Use the annotation file's directory as the base if it differs from the
+            # image_dir (e.g. when auto-saving annotations).
+            if ann_file and os.path.isfile(ann_file):
+                ann_dir = os.path.dirname(ann_file)
+                self._export_crops_from_annotation(ann_dir, ann_file,
+                                                    self.ctx.get("annotation_type", "word"))
+                # use ann_dir for later stats and metadata calculations
+                folder = ann_dir
+            # Special handling for synthetic/GAN outputs: export generated
+            # images and build per-image crops + annotation file so analyzer
+            # can treat them as a proper annotated dataset.
+            if self.ctx.get("type") == "synthetic":
+                try:
+                    import shutil, uuid
+                    import state as S
+                    gen_files = getattr(S, 'gan_generated_files', None)
+                    if gen_files:
+                        # determine a clean base folder – if pathDirectory already
+                        # ends with gan_output_data, use it directly to avoid nesting
+                        target_base = getattr(S, 'pathDirectory', None)
+                        if not target_base:
+                            target_base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                        if os.path.basename(target_base) != 'gan_output_data':
+                            target = os.path.join(target_base, 'gan_output_data')
+                        else:
+                            target = target_base
+                        os.makedirs(target, exist_ok=True)
+
+                        copied = []
+                        for sv, jp, texts in gen_files:
+                            src = jp if (jp and os.path.isfile(jp)) else sv
+                            if not src or not os.path.exists(src):
+                                continue
+                            name = os.path.basename(src)
+                            dst_name = f"{os.path.splitext(name)[0]}_{uuid.uuid4().hex[:6]}{os.path.splitext(name)[1]}"
+                            dst = os.path.join(target, dst_name)
+                            try:
+                                shutil.copyfile(src, dst)
+                            except Exception:
+                                with open(src, 'rb') as fr, open(dst, 'wb') as fw:
+                                    fw.write(fr.read())
+                            copied.append((dst_name, texts))
+
+                        # Prepare annotation file and optional metadata
+                        ann_path = os.path.join(target, 'annotation.txt')
+                        meta_path = os.path.join(target, 'annotation_meta.json')
+                        with open(ann_path, 'w', encoding='utf-8') as af:
+                            af.write('# Generated annotation file\n')
+
+                        # Try to run detector per image to produce crops
+                        try:
+                            from actions import save_file as save_file_action
+                        except Exception:
+                            save_file_action = None
+
+                        image_list = [os.path.join(target, n) for n, _ in copied]
+
+                        if save_file_action:
+                            S.pathDirectory = target
+                            S.list_of_files = image_list
+                            S.directoryout = os.path.join(target, 'out')
+                            S.directorytmp = os.path.join(target, 'tmp')
+                            os.makedirs(S.directoryout, exist_ok=True)
+                            os.makedirs(S.directorytmp, exist_ok=True)
+
+                            for idx, src_img in enumerate(image_list):
+                                try:
+                                    S.pos = idx
+                                    save_file_action.save_file()
+                                except Exception:
+                                    continue
+
+                                img_base = os.path.splitext(os.path.basename(src_img))[0]
+                                crops_dir = os.path.join(target, 'crops', img_base)
+                                os.makedirs(crops_dir, exist_ok=True)
+
+                                wp = getattr(S, 'word_image_paths', []) or []
+                                wbb = getattr(S, 'word_bboxes', []) or []
+
+                                for i, crop_path in enumerate(wp):
+                                    if not os.path.exists(crop_path):
+                                        continue
+                                    dst_name = f"{img_base}_{i}.png"
+                                    dst_path = os.path.join(crops_dir, dst_name)
+                                    try:
+                                        shutil.move(crop_path, dst_path)
+                                    except Exception:
+                                        try:
+                                            shutil.copyfile(crop_path, dst_path)
+                                        except Exception:
+                                            continue
+
+                                with open(ann_path, 'a', encoding='utf-8') as af:
+                                    for i, bbox in enumerate(wbb):
+                                        # write only image name + transcription
+                                        gt = ''
+                                        texts = copied[idx][1] if idx < len(copied) else None
+                                        if texts:
+                                            gt = ' '.join([t.strip() for t in texts])
+                                        af.write(f"{os.path.basename(src_img)} {gt}\n")
+                        else:
+                            # Detector unavailable: simple annotation (image + text only)
+                            with open(ann_path, 'a', encoding='utf-8') as af:
+                                for img_name, texts in copied:
+                                    gt = ' '.join([t.strip() for t in (texts or []) if t]) or ""
+                                    af.write(f"{img_name} {gt}\n")
+
+                        try:
+                            import json as _json
+                            ann_type = getattr(S, 'annotation_type', 'word')
+                            with open(meta_path, 'w', encoding='utf-8') as mf:
+                                _json.dump({"annotation_type": ann_type}, mf)
+                        except Exception:
+                            pass
+
+                        folder = target
+                        ann_file = ann_path
+                        has_ann = True
+                        self.ctx['image_dir'] = folder
+                        self.ctx['annotation_file'] = ann_file
+                        self.ctx['images'] = image_list
+                except Exception:
+                    pass
 
             if has_ann and ann_file and os.path.isfile(ann_file):
                 # Use CorpusAnalyzer on the parent folder of the annotation file
@@ -120,9 +247,25 @@ class AnalysisPanel(tk.Frame):
                     stats = self.analyzer.analyze_folder(folder)
                 except Exception as e:
                     stats = {"error": str(e)}
+            # Override annotation type if context specifies it (preprocessing choice)
+            if self.ctx.get("annotation_type"):
+                stats["annotation_type"] = self.ctx.get("annotation_type")
+            if self.ctx.get("annotation_source"):
+                stats["annotation_source"] = self.ctx.get("annotation_source")
 
             # Supplement with image-only metadata
-            stats["image_count"] = len(self.ctx.get("images", []))
+            # image_count should reflect number of cropped images if available
+            # folder may have been redirected to ann_dir above
+            crops_dir = os.path.join(folder, 'crops')
+            if os.path.isdir(crops_dir):
+                # count subdirectories (each source image) or files
+                subdirs = [d for d in os.listdir(crops_dir) if os.path.isdir(os.path.join(crops_dir, d))]
+                if subdirs:
+                    stats["image_count"] = len(subdirs)
+                else:
+                    stats["image_count"] = len([f for f in os.listdir(crops_dir) if os.path.isfile(os.path.join(crops_dir, f))])
+            else:
+                stats["image_count"] = len(self.ctx.get("images", []))
             stats["dataset_type"] = self.ctx.get("type", "unknown")
             stats["has_annotations"] = has_ann
             meta = self.ctx.get("metadata", {})
@@ -136,7 +279,74 @@ class AnalysisPanel(tk.Frame):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _populate_tabs(self, stats: Dict):
+    def _export_crops_from_annotation(self, folder: str, ann_file: str, ann_type: str):
+        """Read an IAM-style annotation file and save crops per image.
+
+        Crops are written to ``folder/crops/<image_basename>/``. If the crops
+        directory already exists and contains files, the method does nothing.
+        The ``ann_type`` is saved to ``annotation_meta.json`` alongside the
+        annotations.
+        """
+        crops_base = os.path.join(folder, 'crops')
+        if os.path.exists(crops_base) and any(os.scandir(crops_base)):
+            return  # already generated
+        os.makedirs(crops_base, exist_ok=True)
+        try:
+            with open(ann_file, 'r', encoding='utf-8') as af:
+                for line in af:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 8:
+                        continue
+                    imgname = parts[0]
+                    # coordinates in IAM format: x y w h after status+writer
+                    try:
+                        x = int(parts[3]); y = int(parts[4])
+                        w = int(parts[5]); h = int(parts[6])
+                    except Exception:
+                        continue
+                    # locate image path
+                    imgpath = imgname
+                    if not os.path.isabs(imgpath):
+                        candidate = os.path.join(folder, imgname)
+                        if os.path.exists(candidate):
+                            imgpath = candidate
+                        else:
+                            # try context list
+                            for p in self.ctx.get('images', []):
+                                if os.path.basename(p) == imgname:
+                                    imgpath = p
+                                    break
+                    if not os.path.exists(imgpath):
+                        continue
+                    try:
+                        im = Image.open(imgpath)
+                        crop = im.crop((x, y, x + w, y + h))
+                    except Exception:
+                        continue
+                    img_base = os.path.splitext(os.path.basename(imgpath))[0]
+                    outdir = os.path.join(crops_base, img_base)
+                    os.makedirs(outdir, exist_ok=True)
+                    # name by coordinates to avoid clashes
+                    cname = f"{img_base}_{x}_{y}_{w}_{h}.png"
+                    try:
+                        crop.save(os.path.join(outdir, cname))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        # write metadata
+        try:
+            meta_path = os.path.join(folder, 'annotation_meta.json')
+            with open(meta_path, 'w', encoding='utf-8') as mf:
+                import json as _json
+                _json.dump({"annotation_type": ann_type}, mf)
+        except Exception:
+            pass
+
+    def _populate_tabs(self, stats):
         if "error" in stats:
             self.status_var.set(f"❌ Error: {stats['error']}")
             return
@@ -147,10 +357,6 @@ class AnalysisPanel(tk.Frame):
         self._populate_chars(stats)
         self._populate_writers(stats)
         self._populate_gaps(stats)
-
-    # ------------------------------------------------------------------
-    # Tab: Overview
-    # ------------------------------------------------------------------
 
     def _populate_overview(self, stats):
         for w in self.tab_overview.winfo_children():
@@ -163,7 +369,8 @@ class AnalysisPanel(tk.Frame):
             ("📁 Dataset Type", str(stats.get("dataset_type", "—")).title()),
             ("🖼️ Images", f'{stats.get("image_count", 0):,}'),
             ("📝 Annotations", f'{stats.get("total_annotations", 0):,}'),
-            ("📐 Avg Resolution", f'{stats.get("avg_width", 0)}×{stats.get("avg_height", 0)}'),
+            ("� Crop Images", f'{stats.get("crop_count", 0):,}'),
+            ("�📐 Avg Resolution", f'{stats.get("avg_width", 0)}×{stats.get("avg_height", 0)}'),
             ("💾 Size", f'{stats.get("total_size_mb", 0):.1f} MB'),
         ]
         char_stats = stats.get("character_stats", {})

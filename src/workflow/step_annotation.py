@@ -229,15 +229,104 @@ class AnnotationPanel(tk.Frame):
                     f for f in os.listdir(out_dir)
                     if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')))
 
+            # Fallback: some detection flow stores detected crop paths in S.word_image_paths
             if not crop_files:
-                tk.Label(self._body,
-                         text="No word detection crops found.\n"
-                              "Run 'Detect Words' in Preprocessing first,\n"
-                              "or switch Annotation Source to 'Original Images'.",
-                         font=("Segoe UI", 12), bg=self.colors["bg_dark"],
-                         fg=self.colors["text_muted"]).pack(expand=True)
-                return
-            word_paths = [(os.path.join(out_dir, f), f) for f in crop_files]
+                fallback = getattr(S, 'word_image_paths', []) or []
+                if fallback:
+                    word_paths = [(p, os.path.basename(p)) for p in fallback]
+                else:
+                    # Try to recrop on-the-fly from stored bounding boxes
+                    bboxes = getattr(S, 'word_bboxes', []) or []
+                    base_img = None
+                    if hasattr(S, 'word_detect_image') and S.word_detect_image:
+                        base_img = S.word_detect_image
+                    elif hasattr(S, 'word_display_img') and S.word_display_img is not None:
+                        try:
+                            import cv2
+                            import numpy as _np
+                            base_img = Image.fromarray(_np.cvtColor(S.word_display_img, cv2.COLOR_BGR2RGB))
+                        except Exception:
+                            base_img = None
+
+                    if bboxes and base_img is not None:
+                        # Prepare output directory (persist recrops here)
+                        out_dir_save = getattr(S, 'directoryout', None)
+                        if not out_dir_save:
+                            if getattr(S, 'pathDirectory', None):
+                                out_dir_save = os.path.join(getattr(S, 'pathDirectory'), 'out')
+                            else:
+                                out_dir_save = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'out'))
+                        S.directoryout = out_dir_save
+                        os.makedirs(out_dir_save, exist_ok=True)
+
+                        # Also ensure a tmp dir exists for UI temp files
+                        tmp_dir = getattr(S, 'directorytmp', None)
+                        if not tmp_dir:
+                            tmp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'gan_output_data', 'tmp'))
+                            S.directorytmp = tmp_dir
+                        os.makedirs(tmp_dir, exist_ok=True)
+
+                        det_scale = float(getattr(S, 'detection_scale', 1.0) or 1.0)
+                        pad = int(getattr(S, 'bbox_padding', 0) or 0)
+                        word_paths = []
+                        saved_out_paths = []
+                        img_w, img_h = base_img.size
+                        for i, bb in enumerate(bboxes):
+                            try:
+                                bx, by, bw, bh = map(int, bb)
+                            except Exception:
+                                continue
+                            if det_scale and det_scale != 1.0:
+                                x = int(bx / det_scale)
+                                y = int(by / det_scale)
+                                w = int(bw / det_scale)
+                                h = int(bh / det_scale)
+                            else:
+                                x, y, w, h = bx, by, bw, bh
+                            px = max(0, x - pad)
+                            py = max(0, y - pad)
+                            px2 = min(img_w, x + w + pad)
+                            py2 = min(img_h, y + h + pad)
+                            try:
+                                crop = base_img.crop((px, py, px2, py2))
+                                fname = f"recrop_{i:04d}.png"
+                                out_fp = os.path.join(out_dir_save, fname)
+                                tmp_fp = os.path.join(tmp_dir, fname)
+                                # Save persistent out crop
+                                crop.save(out_fp, 'PNG')
+                                # Also save a tmp copy for UI if needed
+                                try:
+                                    crop.save(tmp_fp, 'PNG')
+                                except Exception:
+                                    pass
+                                word_paths.append((out_fp, fname))
+                                saved_out_paths.append(out_fp)
+                            except Exception:
+                                continue
+                        if not word_paths:
+                            tk.Label(self._body,
+                                     text=(f"No word detection crops found in '{out_dir or ''}'.\n"
+                                           "Run 'Detect Words' in Preprocessing first,\n"
+                                           "or switch Annotation Source to 'Original Images'."),
+                                     font=("Segoe UI", 12), bg=self.colors["bg_dark"],
+                                     fg=self.colors["text_muted"]).pack(expand=True)
+                            return
+                        # Update shared state to point to saved out crops
+                        S.word_image_paths = saved_out_paths
+                        try:
+                            S.word_image_paths.sort()
+                        except Exception:
+                            pass
+                    else:
+                        tk.Label(self._body,
+                                 text=(f"No word detection crops found in '{out_dir or ''}'.\n"
+                                       "Run 'Detect Words' in Preprocessing first,\n"
+                                       "or switch Annotation Source to 'Original Images'."),
+                                 font=("Segoe UI", 12), bg=self.colors["bg_dark"],
+                                 fg=self.colors["text_muted"]).pack(expand=True)
+                        return
+            else:
+                word_paths = [(os.path.join(out_dir, f), f) for f in crop_files]
         else:
             # Use original loaded images as-is
             imgs = self.ctx.get("images", []) or getattr(S, 'list_of_files', [])
@@ -851,6 +940,110 @@ class AnnotationPanel(tk.Frame):
                                 f"Annotations saved to:\n{save_path}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save: {e}")
+
+    # ------------------------------------------------------------------
+    # Programmatic helpers for ingestion/analysis integration
+    # ------------------------------------------------------------------
+    def _collect_annotations_data(self, mode=None):
+        """Return (data_dict, total_count, mode) constructed from current UI state.
+        Does not prompt the user.
+        """
+        # Determine mode
+        if mode is None:
+            mode = getattr(self, '_page_mode', 'word') or 'word'
+
+        data = {}
+        total = 0
+        if mode == 'word':
+            wf = self._word_files
+            if self._page_mode == 'word':
+                texts = self._get_all_annotation_texts(len(wf))
+                words = []
+                for i in range(len(wf)):
+                    words.append({
+                        'file': wf[i][1] if i < len(wf) else '',
+                        'text': texts[i]
+                    })
+                data = {'mode': 'word', 'words': words}
+                total = sum(1 for w in words if w.get('text', '').strip())
+            else:
+                words = []
+                for i, e in enumerate(self._entries):
+                    words.append({'file': self._word_files[i][1] if i < len(self._word_files) else '',
+                                  'text': e.get().strip()})
+                data = {'mode': 'word', 'words': words}
+                total = sum(1 for w in words if w.get('text', '').strip())
+
+        elif mode == 'line':
+            det = self._ann_detected_lines
+            if det and self._page_mode == 'line_detected':
+                texts = self._get_all_annotation_texts(len(det))
+                lines_out = []
+                for i in range(len(det)):
+                    lt = det[i] if i < len(det) else (0, 0)
+                    if len(lt) == 4:
+                        x1, y1, x2, y2 = lt
+                    else:
+                        y1, y2 = lt
+                        x1, x2 = 0, self._ann_img_size[0]
+                    lines_out.append({
+                        'line_id': i,
+                        'y_start': int(y1), 'y_end': int(y2),
+                        'text': texts[i],
+                        'bbox': [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+                    })
+                data = {'mode': 'line', 'image': os.path.basename(self._ann_image_path or ''),
+                        'image_size': list(self._ann_img_size or (0,0)), 'lines': lines_out}
+                total = sum(1 for l in lines_out if l.get('text','').strip())
+            else:
+                imgs = getattr(self, '_line_cropped_imgs', self.ctx.get('images', []) or getattr(S, 'list_of_files', []))
+                texts = self._get_all_annotation_texts(len(imgs))
+                lines_out = []
+                for i in range(len(imgs)):
+                    fname = os.path.basename(imgs[i]) if i < len(imgs) else f'line_{i}'
+                    lines_out.append({'line_id': i, 'file': fname, 'text': texts[i]})
+                data = {'mode': 'line', 'lines': lines_out}
+                total = sum(1 for l in lines_out if l.get('text','').strip())
+
+        else:  # character
+            boxes = self._ann_char_boxes
+            chars_out = []
+            for i, e in enumerate(self._entries):
+                b = boxes[i] if i < len(boxes) else {}
+                coords = b.get('coords', (0,0,0,0))
+                chars_out.append({'char_id': i, 'label': e.get().strip(), 'coords':[int(c) for c in coords]})
+            data = {'mode':'character', 'image': os.path.basename(self._ann_image_path or ''), 'characters': chars_out}
+            total = sum(1 for c in chars_out if c.get('label','').strip())
+
+        return data, total, mode
+
+    def save_annotations_to_path(self, dest_path=None, mode=None, show_message=True):
+        """Save current annotations to dest_path (JSON). If dest_path is None use default in dataset folder.
+        Returns True on success, False otherwise.
+        """
+        data, total, mode = self._collect_annotations_data(mode)
+        if total <= 0:
+            return False
+
+        if dest_path is None:
+            base_dir = getattr(S, 'pathDirectory', None) or self.ctx.get('image_dir') or os.getcwd()
+            os.makedirs(base_dir, exist_ok=True)
+            dest_path = os.path.join(base_dir, 'annotations_auto.json')
+
+        try:
+            with open(dest_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            # Update context & shared state
+            self.ctx['annotation_file'] = dest_path
+            self.ctx['annotations'] = data
+            self.ctx['metadata']['has_annotations'] = True
+            if show_message:
+                messagebox.showinfo('Saved', f'Annotations saved to:\n{dest_path}')
+            return True
+        except Exception as e:
+            if show_message:
+                messagebox.showerror('Error', f'Failed to save annotations: {e}')
+            return False
 
     # ------------------------------------------------------------------
     # Export IAM format

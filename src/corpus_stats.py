@@ -77,6 +77,18 @@ class CorpusAnalyzer:
         results["ngram_stats"] = self._compute_ngram_stats()
         results["style_stats"] = self._compute_style_stats()
         
+        # Count crop images if folder contains crops subdirectory
+        crop_dir = os.path.join(folder_path, "crops")
+        if os.path.isdir(crop_dir):
+            cnt = 0
+            for root, dirs, files in os.walk(crop_dir):
+                for f in files:
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        cnt += 1
+            results['crop_count'] = cnt
+        else:
+            results['crop_count'] = 0
+        
         return results
     
     def _is_gan_annotation_folder(self, folder_path: str) -> bool:
@@ -125,7 +137,7 @@ class CorpusAnalyzer:
             with open(ann_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
-                    if not line:
+                    if not line or line.startswith('#'):
                         continue
                     
                     parts = line.split()
@@ -135,6 +147,14 @@ class CorpusAnalyzer:
                         writer = parts[2]  # writer/style ID
                         text = ' '.join(parts[8:]) if len(parts) > 8 else parts[7]
                         
+                        self.handwriting_styles.add(writer)
+                        self._process_text(text)
+                        self.images.append(parts[0])
+                    elif len(parts) >= 2:
+                        # simple format: image_name followed by transcription
+                        self.total_annotations += 1
+                        writer = 'gan'
+                        text = ' '.join(parts[1:])
                         self.handwriting_styles.add(writer)
                         self._process_text(text)
                         self.images.append(parts[0])
