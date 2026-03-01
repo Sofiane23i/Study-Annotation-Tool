@@ -1,0 +1,4 @@
+# line-level annotations (IAM format)
+# crop_name ok writer_id x y w h transcription
+batch_1_f8ef1b_line0.png ok 0 562 136 85 43 dsfsdfsd
+batch_1_f8ef1b_line1.png ok 0 552 198 102 45 sdfdsf sfsd

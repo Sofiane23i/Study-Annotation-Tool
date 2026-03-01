@@ -113,7 +113,7 @@ class AnalysisPanel(tk.Frame):
             # Ensure crops are available per-image for any annotated folder.
             # Use the annotation file's directory as the base if it differs from the
             # image_dir (e.g. when auto-saving annotations).
-            if ann_file and os.path.isfile(ann_file):
+            if ann_file and os.path.isfile(ann_file) and self.ctx.get("type") != "synthetic":
                 ann_dir = os.path.dirname(ann_file)
                 self._export_crops_from_annotation(ann_dir, ann_file,
                                                     self.ctx.get("annotation_type", "word"))
@@ -124,29 +124,44 @@ class AnalysisPanel(tk.Frame):
             # can treat them as a proper annotated dataset.
             if self.ctx.get("type") == "synthetic":
                 try:
-                    import shutil, uuid
+                    import shutil, uuid, datetime as _dt, tempfile
                     import state as S
                     gen_files = getattr(S, 'gan_generated_files', None)
                     if gen_files:
-                        # determine a clean base folder – if pathDirectory already
-                        # ends with gan_output_data, use it directly to avoid nesting
-                        target_base = getattr(S, 'pathDirectory', None)
-                        if not target_base:
-                            target_base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-                        if os.path.basename(target_base) != 'gan_output_data':
-                            target = os.path.join(target_base, 'gan_output_data')
-                        else:
-                            target = target_base
-                        os.makedirs(target, exist_ok=True)
+                        # ── Determine gan_output_data base ──
+                        # Always resolve from the source tree to avoid
+                        # nested gan_output_data folders when S.pathDirectory
+                        # has been redirected to a previous session.
+                        src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                        gan_root = os.path.join(src_root, 'gan_output_data')
+                        os.makedirs(gan_root, exist_ok=True)
 
-                        copied = []
+                        # ── Clean up stale out / tmp folders ──
+                        for stale in ('out', 'tmp'):
+                            stale_path = os.path.join(gan_root, stale)
+                            if os.path.isdir(stale_path):
+                                try:
+                                    shutil.rmtree(stale_path)
+                                except Exception:
+                                    pass
+
+                        # ── Annotation label & timestamped folder ──
+                        ann_type = getattr(S, 'annotation_type', None) or self.ctx.get("annotation_type", "word")
+                        label = ann_type if ann_type in ("line", "word") else "word"
+                        stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                        session_dir = os.path.join(gan_root, f"{label}_{stamp}")
+                        images_dir = os.path.join(session_dir, "images")
+                        os.makedirs(images_dir, exist_ok=True)
+
+                        # ── Copy main generated images into session_dir ──
+                        copied = []  # (main_filename, texts)
                         for sv, jp, texts in gen_files:
                             src = jp if (jp and os.path.isfile(jp)) else sv
                             if not src or not os.path.exists(src):
                                 continue
                             name = os.path.basename(src)
                             dst_name = f"{os.path.splitext(name)[0]}_{uuid.uuid4().hex[:6]}{os.path.splitext(name)[1]}"
-                            dst = os.path.join(target, dst_name)
+                            dst = os.path.join(session_dir, dst_name)
                             try:
                                 shutil.copyfile(src, dst)
                             except Exception:
@@ -154,86 +169,243 @@ class AnalysisPanel(tk.Frame):
                                     fw.write(fr.read())
                             copied.append((dst_name, texts))
 
-                        # Prepare annotation file and optional metadata
-                        ann_path = os.path.join(target, 'annotation.txt')
-                        meta_path = os.path.join(target, 'annotation_meta.json')
-                        with open(ann_path, 'w', encoding='utf-8') as af:
-                            af.write('# Generated annotation file\n')
+                        main_image_list = [os.path.join(session_dir, n) for n, _ in copied]
 
-                        # Try to run detector per image to produce crops
+                        # ── Run detector to produce crops ──
                         try:
                             from actions import save_file as save_file_action
                         except Exception:
                             save_file_action = None
 
-                        image_list = [os.path.join(target, n) for n, _ in copied]
+                        try:
+                            from actions.line_annotate import detect_text_lines
+                        except Exception:
+                            detect_text_lines = None
 
-                        if save_file_action:
-                            S.pathDirectory = target
-                            S.list_of_files = image_list
-                            S.directoryout = os.path.join(target, 'out')
-                            S.directorytmp = os.path.join(target, 'tmp')
+                        # (crop_filename, src_image, x, y, w, h, transcription)
+                        crop_entries = []
+
+                        # Build lookup of user-typed annotation texts from the
+                        # annotation stage (ctx['annotations']).  These come from
+                        # the input fields below each crop image.
+                        user_annotations = {}  # index -> text
+                        ann_data = self.ctx.get('annotations') or {}
+                        ann_mode = ann_data.get('mode', 'word')
+                        if ann_mode == 'word':
+                            for wi, w_entry in enumerate(ann_data.get('words', [])):
+                                txt = (w_entry.get('text') or '').strip()
+                                if txt:
+                                    user_annotations[wi] = txt
+                        elif ann_mode == 'line':
+                            for li, l_entry in enumerate(ann_data.get('lines', [])):
+                                txt = (l_entry.get('text') or '').strip()
+                                if txt:
+                                    user_annotations[li] = txt
+
+                        # Pre-build GAN text lists per source image.
+                        # For "line" mode: keep each line as-is.
+                        # For "word" mode: split lines into individual words.
+                        gan_texts_per_image = {}  # idx -> [str, ...]
+                        for ci, (_, c_texts) in enumerate(copied):
+                            if label == "line":
+                                # One text entry per line
+                                gan_texts_per_image[ci] = [
+                                    ln.strip() for ln in (c_texts or []) if ln.strip()
+                                ]
+                            else:
+                                # Split into individual words
+                                words = []
+                                for ln in (c_texts or []):
+                                    words.extend(ln.strip().split())
+                                gan_texts_per_image[ci] = words
+
+                        global_crop_idx = 0  # running counter across all source images
+
+                        # ============================================================
+                        # LINE-level detection & cropping
+                        # ============================================================
+                        if label == "line" and detect_text_lines is not None:
+                            import cv2, numpy as np
+
+                            for idx, src_img in enumerate(main_image_list):
+                                try:
+                                    pil_img = Image.open(src_img).convert('RGB')
+                                    img_w, img_h = pil_img.size
+                                    img_array = np.array(pil_img)
+                                    img_gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                                    lines_detected = detect_text_lines(img_gray)
+                                except Exception as _le:
+                                    print(f"[step_analysis] Line detection failed "
+                                          f"for {src_img}: {_le}")
+                                    continue
+
+                                img_base = os.path.splitext(
+                                    os.path.basename(src_img))[0]
+                                img_lines = gan_texts_per_image.get(idx, [])
+
+                                # Add padding around each line
+                                pad = 5
+                                for i, (x1, y1, x2, y2) in enumerate(lines_detected):
+                                    # Use tight content boundaries from original image
+                                    x1_pad = max(0, int(x1) - pad)
+                                    y1_pad = max(0, int(y1) - pad)
+                                    x2_pad = min(img_w, int(x2) + pad)
+                                    y2_pad = min(img_h, int(y2) + pad)
+                                    bw = x2_pad - x1_pad
+                                    bh = y2_pad - y1_pad
+                                    if bh <= 0 or bw <= 0:
+                                        continue
+                                    # Crop using tight boundaries from original image
+                                    crop_array = img_array[y1_pad:y2_pad, x1_pad:x2_pad]
+                                    crop = Image.fromarray(crop_array)
+                                    crop_name = f"{img_base}_line{i}.png"
+                                    crop_dst = os.path.join(images_dir, crop_name)
+                                    try:
+                                        crop.save(crop_dst, 'PNG')
+                                    except Exception:
+                                        continue
+
+                                    gt = user_annotations.get(global_crop_idx, '')
+                                    if not gt and i < len(img_lines):
+                                        gt = img_lines[i]
+                                    global_crop_idx += 1
+                                    crop_entries.append((crop_name,
+                                                         os.path.basename(src_img),
+                                                         x1_pad, y1_pad, bw, bh, gt))
+
+                        # ============================================================
+                        # WORD-level detection & cropping (existing flow)
+                        # ============================================================
+                        elif save_file_action:
+                            # Use a temporary directory for detector scratch so
+                            # out / tmp never appear inside gan_output_data.
+                            tmp_root = tempfile.mkdtemp(prefix="gan_det_")
+                            old_path_dir = getattr(S, 'pathDirectory', None)
+                            S.pathDirectory = session_dir
+                            S.list_of_files = main_image_list
+                            S.directoryout = os.path.join(tmp_root, 'out')
+                            S.directorytmp = os.path.join(tmp_root, 'tmp')
                             os.makedirs(S.directoryout, exist_ok=True)
                             os.makedirs(S.directorytmp, exist_ok=True)
 
-                            for idx, src_img in enumerate(image_list):
+                            # Force 'load' mode so save_file reads from
+                            # S.list_of_files instead of GAN batch state.
+                            old_input_mode = None
+                            if hasattr(S, 'input_mode_var'):
+                                old_input_mode = S.input_mode_var.get()
+                                S.input_mode_var.set('load')
+
+                            for idx, src_img in enumerate(main_image_list):
                                 try:
                                     S.pos = idx
                                     save_file_action.save_file()
-                                except Exception:
+                                except Exception as _det_err:
+                                    print(f"[step_analysis] Detection failed for {src_img}: {_det_err}")
                                     continue
 
                                 img_base = os.path.splitext(os.path.basename(src_img))[0]
-                                crops_dir = os.path.join(target, 'crops', img_base)
-                                os.makedirs(crops_dir, exist_ok=True)
-
                                 wp = getattr(S, 'word_image_paths', []) or []
                                 wbb = getattr(S, 'word_bboxes', []) or []
+                                img_words = gan_texts_per_image.get(idx, [])
+                                local_crop_i = 0  # per-image crop counter
 
                                 for i, crop_path in enumerate(wp):
                                     if not os.path.exists(crop_path):
                                         continue
-                                    dst_name = f"{img_base}_{i}.png"
-                                    dst_path = os.path.join(crops_dir, dst_name)
+                                    crop_name = f"{img_base}_{i}.png"
+                                    crop_dst = os.path.join(images_dir, crop_name)
                                     try:
-                                        shutil.move(crop_path, dst_path)
+                                        shutil.move(crop_path, crop_dst)
                                     except Exception:
                                         try:
-                                            shutil.copyfile(crop_path, dst_path)
+                                            shutil.copyfile(crop_path, crop_dst)
                                         except Exception:
                                             continue
+                                    # Extract bbox (x, y, w, h) from detector
+                                    if i < len(wbb):
+                                        bb = wbb[i]
+                                        try:
+                                            bx, by, bw, bh = int(bb[0]), int(bb[1]), int(bb[2]), int(bb[3])
+                                        except Exception:
+                                            bx, by, bw, bh = 0, 0, 0, 0
+                                    else:
+                                        bx, by, bw, bh = 0, 0, 0, 0
+                                    # Prefer user-typed annotation; fall back to
+                                    # GAN word (split line-by-line, left-to-right).
+                                    gt = user_annotations.get(global_crop_idx, '')
+                                    if not gt and local_crop_i < len(img_words):
+                                        gt = img_words[local_crop_i]
+                                    local_crop_i += 1
+                                    global_crop_idx += 1
+                                    crop_entries.append((crop_name, os.path.basename(src_img),
+                                                         bx, by, bw, bh, gt))
 
-                                with open(ann_path, 'a', encoding='utf-8') as af:
-                                    for i, bbox in enumerate(wbb):
-                                        # write only image name + transcription
-                                        gt = ''
-                                        texts = copied[idx][1] if idx < len(copied) else None
-                                        if texts:
-                                            gt = ' '.join([t.strip() for t in texts])
-                                        af.write(f"{os.path.basename(src_img)} {gt}\n")
+                            # Restore pathDirectory and input mode
+                            if old_path_dir is not None:
+                                S.pathDirectory = old_path_dir
+                            if old_input_mode is not None and hasattr(S, 'input_mode_var'):
+                                S.input_mode_var.set(old_input_mode)
+
+                            # Clean up temporary detector directories
+                            try:
+                                shutil.rmtree(tmp_root)
+                            except Exception:
+                                pass
                         else:
-                            # Detector unavailable: simple annotation (image + text only)
-                            with open(ann_path, 'a', encoding='utf-8') as af:
-                                for img_name, texts in copied:
-                                    gt = ' '.join([t.strip() for t in (texts or []) if t]) or ""
-                                    af.write(f"{img_name} {gt}\n")
+                            # Detector unavailable – copy main images as crops
+                            for c_idx, (c_name, c_texts) in enumerate(copied):
+                                src_p = os.path.join(session_dir, c_name)
+                                if not os.path.isfile(src_p):
+                                    continue
+                                try:
+                                    shutil.copy2(src_p, os.path.join(images_dir, c_name))
+                                except Exception:
+                                    continue
+                                # Prefer user annotation; fall back to full
+                                # GAN line text for whole-image crop.
+                                gt = user_annotations.get(global_crop_idx, '')
+                                if not gt:
+                                    gt = ' '.join([t.strip() for t in (c_texts or []) if t]) or ''
+                                global_crop_idx += 1
+                                # No bbox available without detector
+                                try:
+                                    im = Image.open(src_p)
+                                    iw, ih = im.size
+                                except Exception:
+                                    iw, ih = 0, 0
+                                crop_entries.append((c_name, c_name, 0, 0, iw, ih, gt))
 
+                        # ── Write annotations.txt in IAM format inside images/ ──
+                        # Format: crop_name ok 0 x y w h transcription
+                        ann_path = os.path.join(images_dir, 'annotations.txt')
+                        with open(ann_path, 'w', encoding='utf-8') as af:
+                            af.write(f'# {label}-level annotations (IAM format)\n')
+                            af.write('# crop_name ok writer_id x y w h transcription\n')
+                            for crop_name, src_img, bx, by, bw, bh, gt in crop_entries:
+                                af.write(f"{crop_name} ok 0 {bx} {by} {bw} {bh} {gt}\n")
+
+                        # ── Write metadata inside images/ ──
                         try:
                             import json as _json
-                            ann_type = getattr(S, 'annotation_type', 'word')
+                            meta_path = os.path.join(images_dir, 'annotation_meta.json')
                             with open(meta_path, 'w', encoding='utf-8') as mf:
-                                _json.dump({"annotation_type": ann_type}, mf)
+                                _json.dump({"annotation_type": label,
+                                            "total_crops": len(crop_entries),
+                                            "created": stamp}, mf)
                         except Exception:
                             pass
 
-                        folder = target
+                        # ── Point context to images/ for downstream analysis ──
+                        folder = images_dir
                         ann_file = ann_path
                         has_ann = True
-                        self.ctx['image_dir'] = folder
-                        self.ctx['annotation_file'] = ann_file
-                        self.ctx['images'] = image_list
-                except Exception:
-                    pass
+                        self.ctx['image_dir'] = images_dir
+                        self.ctx['annotation_file'] = ann_path
+                        self.ctx['images'] = [os.path.join(images_dir, e[0]) for e in crop_entries]
+                except Exception as _synth_err:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"[step_analysis] Synthetic export error: {_synth_err}")
 
             if has_ann and ann_file and os.path.isfile(ann_file):
                 # Use CorpusAnalyzer on the parent folder of the annotation file

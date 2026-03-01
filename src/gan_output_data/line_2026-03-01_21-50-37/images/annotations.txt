@@ -1,0 +1,4 @@
+# line-level annotations (IAM format)
+# crop_name ok writer_id x y w h transcription
+batch_1_67db4e_line0.png ok 0 0 141 1200 35 source sofiane
+batch_1_67db4e_line1.png ok 0 0 199 1200 34 mpoiu

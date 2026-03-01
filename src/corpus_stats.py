@@ -93,8 +93,12 @@ class CorpusAnalyzer:
     
     def _is_gan_annotation_folder(self, folder_path: str) -> bool:
         """Check if folder contains GAN output annotations."""
-        ann_file = os.path.join(folder_path, "annotation.txt")
-        return os.path.exists(ann_file)
+        # Check both singular and plural naming conventions
+        for name in ("annotation.txt", "annotations.txt"):
+            ann_file = os.path.join(folder_path, name)
+            if os.path.exists(ann_file):
+                return True
+        return False
     
     def _is_character_annotation_folder(self, folder_path: str) -> bool:
         """Check if folder contains character annotations."""
@@ -119,11 +123,16 @@ class CorpusAnalyzer:
         for tf in txt_files:
             try:
                 with open(tf, 'r', encoding='utf-8') as f:
-                    line = f.readline().strip()
-                    # IAM format: index ok/err writer x y w h GT text
-                    parts = line.split()
-                    if len(parts) >= 8 and parts[1] in ('ok', 'err'):
-                        return True
+                    for line in f:
+                        line = line.strip()
+                        # Skip empty lines and comments
+                        if not line or line.startswith('#'):
+                            continue
+                        # IAM format: index ok/err writer x y w h GT text
+                        parts = line.split()
+                        if len(parts) >= 8 and parts[1] in ('ok', 'err'):
+                            return True
+                        break  # only check the first non-comment line
             except:
                 pass
         return False
@@ -131,7 +140,10 @@ class CorpusAnalyzer:
     def _analyze_gan_annotations(self, folder_path: str):
         """Analyze GAN-generated annotation files."""
         self.annotation_type = "line"
+        # Check both singular and plural naming conventions
         ann_file = os.path.join(folder_path, "annotation.txt")
+        if not os.path.exists(ann_file):
+            ann_file = os.path.join(folder_path, "annotations.txt")
         
         try:
             with open(ann_file, 'r', encoding='utf-8') as f:

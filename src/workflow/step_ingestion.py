@@ -1417,6 +1417,8 @@ class IngestionPanel(tk.Frame):
 
     def _enable_detection_buttons(self):
         """Enable detection buttons after data is loaded."""
+        if not hasattr(self, 'btn_line'):
+            return
         self.btn_line.config(state="normal")
         self.btn_word.config(state="normal")
         # Character only if word images already exist
