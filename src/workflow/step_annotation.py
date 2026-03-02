@@ -9,7 +9,7 @@ import json
 import tkinter as tk
 from tkinter import messagebox, filedialog
 from typing import Dict, Any
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 import state as S
 
@@ -63,6 +63,10 @@ class AnnotationPanel(tk.Frame):
 
     def _clear_body(self):
         self._sync_page_entries()  # save current page before clearing
+        # Restore default page size if character mode changed it
+        if hasattr(self, '_saved_page_size'):
+            self.PAGE_SIZE = self._saved_page_size
+            del self._saved_page_size
         for w in self._body.winfo_children():
             w.destroy()
         self._photo_refs.clear()
@@ -76,6 +80,9 @@ class AnnotationPanel(tk.Frame):
     def _sync_page_entries(self):
         """Save current page's entry values into the master dict."""
         if self._page_mode is None:
+            return
+        if self._page_mode == "character":
+            self._sync_char_entries()
             return
         offset = self._page * self.PAGE_SIZE
         for i, entry in enumerate(self._entries):
@@ -95,6 +102,8 @@ class AnnotationPanel(tk.Frame):
             self._render_line_cropped_page()
         elif self._page_mode == "line_detected":
             self._render_line_detected_page()
+        elif self._page_mode == "character":
+            self._render_char_page()
 
     def _build_pagination_bar(self, parent, total_items: int):
         """Build a pagination bar with prev/next, page indicator, page-size selector."""
@@ -348,11 +357,17 @@ class AnnotationPanel(tk.Frame):
         self._page = 0
         self._all_annotations = {}
 
-        # Pre-fill annotations from input text
-        input_words = self._get_input_words()
-        for i, w in enumerate(input_words):
-            if i < len(word_paths):
-                self._all_annotations[i] = w
+        # Pre-fill annotations from loaded annotation file (ctx)
+        ctx_map = self._build_ctx_annotation_map(
+            [p for p, _ in word_paths])
+        if ctx_map:
+            self._all_annotations.update(ctx_map)
+        else:
+            # Fallback: pre-fill from input text
+            input_words = self._get_input_words()
+            for i, w in enumerate(input_words):
+                if i < len(word_paths):
+                    self._all_annotations[i] = w
 
         # Build the persistent shell: header + pagination bar + page container
         self._word_header = tk.Frame(self._body, bg='#6cb6ff', padx=10, pady=8)
@@ -420,6 +435,43 @@ class AnnotationPanel(tk.Frame):
 
         # Update pagination info
         self._update_page_info(total)
+
+    def _build_ctx_annotation_map(self, image_paths):
+        """Build a mapping {index: text} from ctx['annotations'] matched
+        to the provided image_paths list by filename.
+
+        Returns a dict of {index: annotation_text} for each image that
+        has a matching annotation entry.
+        """
+        ctx_anns = self.ctx.get("annotations", [])
+        if not ctx_anns or not isinstance(ctx_anns, list):
+            return {}
+        if not ctx_anns or not isinstance(ctx_anns[0], dict):
+            return {}
+
+        # Build lookup: basename (lower) -> list of annotation texts
+        from collections import defaultdict
+        ann_by_name = defaultdict(list)
+        for ann in ctx_anns:
+            ann_id = str(ann.get("image_id", ann.get("filename",
+                         ann.get("file", "")))).strip()
+            if not ann_id:
+                continue
+            text = (ann.get("label") or ann.get("text")
+                    or ann.get("caption") or ann.get("transcription") or "")
+            if text:
+                key = os.path.splitext(ann_id.lower())[0]
+                ann_by_name[key].append(str(text))
+
+        # Match each image path to its annotation text
+        result = {}
+        for idx, img_path in enumerate(image_paths):
+            basename = os.path.basename(img_path) if isinstance(img_path, str) else img_path[0] if isinstance(img_path, tuple) else str(img_path)
+            key = os.path.splitext(os.path.basename(basename).lower())[0]
+            texts = ann_by_name.get(key, [])
+            if texts:
+                result[idx] = " ".join(texts)
+        return result
 
     def _get_input_words(self):
         """Get word list from input text."""
@@ -519,13 +571,34 @@ class AnnotationPanel(tk.Frame):
         self._page = 0
         self._all_annotations = {}
 
-        # Pre-fill from input text
-        input_text = self._get_input_text()
-        if input_text:
-            text_lines = [l for l in input_text.splitlines() if l.strip()]
-            for i, line in enumerate(text_lines):
-                if i < len(detected_lines):
-                    self._all_annotations[i] = line
+        # Pre-fill from loaded annotation file (ctx) — use source image name
+        ctx_anns = self.ctx.get("annotations", [])
+        if (isinstance(ctx_anns, list) and ctx_anns
+                and isinstance(ctx_anns[0], dict)):
+            # For detected lines, annotations are indexed sequentially
+            # (all belong to the same source image)
+            img_name = os.path.splitext(
+                os.path.basename(image_path))[0].lower()
+            idx = 0
+            for ann in ctx_anns:
+                ann_id = str(ann.get("image_id", "")).strip()
+                ann_key = os.path.splitext(ann_id.lower())[0]
+                # Match annotations whose image_id starts with this image's name
+                # or belongs to the same source image
+                text = (ann.get("label") or ann.get("text")
+                        or ann.get("caption") or "")
+                if text and idx < len(detected_lines):
+                    self._all_annotations[idx] = str(text)
+                    idx += 1
+        else:
+            # Fallback: pre-fill from input text
+            input_text = self._get_input_text()
+            if input_text:
+                text_lines = [l for l in input_text.splitlines()
+                              if l.strip()]
+                for i, line in enumerate(text_lines):
+                    if i < len(detected_lines):
+                        self._all_annotations[i] = line
 
         # Header
         self._line_det_header = tk.Frame(self._body, bg='#6cb6ff', padx=10, pady=8)
@@ -624,13 +697,18 @@ class AnnotationPanel(tk.Frame):
         self._page = 0
         self._all_annotations = {}
 
-        # Pre-fill from input text (line-by-line)
-        input_text = self._get_input_text()
-        if input_text:
-            text_lines = [l for l in input_text.splitlines() if l.strip()]
-            for i, line in enumerate(text_lines):
-                if i < len(imgs):
-                    self._all_annotations[i] = line
+        # Pre-fill annotations from loaded annotation file (ctx)
+        ctx_map = self._build_ctx_annotation_map(imgs)
+        if ctx_map:
+            self._all_annotations.update(ctx_map)
+        else:
+            # Fallback: pre-fill from input text (line-by-line)
+            input_text = self._get_input_text()
+            if input_text:
+                text_lines = [l for l in input_text.splitlines() if l.strip()]
+                for i, line in enumerate(text_lines):
+                    if i < len(imgs):
+                        self._all_annotations[i] = line
 
         # Build persistent shell
         self._line_header = tk.Frame(self._body, bg='#6cb6ff', padx=10, pady=8)
@@ -709,98 +787,470 @@ class AnnotationPanel(tk.Frame):
         self._update_page_info(total)
 
     # ==================================================================
-    # CHARACTER annotation
+    # CHARACTER annotation  (object-detection style)
     # ==================================================================
+    CHAR_PAGE_SIZE = 5   # images per page in character annotation mode
+
     def _build_char_annotation(self):
-        image_path = self._current_image_path()
-        char_boxes = getattr(S, 'char_detected_boxes', [])
+        """Build character annotation with object-detection-style layout.
 
-        if not image_path:
+        Left pane  – images listed vertically, each drawn with bounding-box
+                      rectangles and character labels.
+        Right pane – editable label list for the currently selected image.
+        Supports pagination (batching) over images.
+        """
+        source = getattr(self, '_annotation_source', 'original')
+
+        if source == "preprocessing":
+            image_path = self._current_image_path()
+            char_boxes = getattr(S, 'char_detected_boxes', [])
+
+            if not image_path:
+                tk.Label(self._body,
+                         text="No images loaded.\n"
+                              "Complete Dataset Ingestion first.",
+                         font=("Segoe UI", 12), bg=self.colors["bg_dark"],
+                         fg=self.colors["text_muted"]).pack(expand=True)
+                return
+            if not char_boxes:
+                tk.Label(self._body,
+                         text="No characters detected.\n"
+                              "Run Character Detection in Preprocessing first.",
+                         font=("Segoe UI", 12), bg=self.colors["bg_dark"],
+                         fg=self.colors["text_muted"]).pack(expand=True)
+                return
+
+            # Convert preprocessing format → unified format
+            self._char_images = [image_path]
+            self._char_annotations = {
+                0: [{"bbox": [cb["coords"][0], cb["coords"][1],
+                              cb["coords"][2] - cb["coords"][0],
+                              cb["coords"][3] - cb["coords"][1]],
+                     "label": cb.get("label", "?"),
+                     "score": cb.get("score", 0)} for cb in char_boxes]
+            }
+        else:
+            # "original" – group ctx annotations by image
+            imgs = self.ctx.get("images", []) or getattr(S, 'list_of_files', [])
+            ctx_anns = self.ctx.get("annotations", [])
+
+            if not imgs:
+                tk.Label(self._body,
+                         text="No images available.\nLoad a dataset first.",
+                         font=("Segoe UI", 12), bg=self.colors["bg_dark"],
+                         fg=self.colors["text_muted"]).pack(expand=True)
+                return
+
+            if not ctx_anns or not isinstance(ctx_anns, list):
+                tk.Label(self._body,
+                         text="No character annotations loaded.\n"
+                              "Load an annotation file with character-level "
+                              "data,\nor switch to Preprocessing source.",
+                         font=("Segoe UI", 12), bg=self.colors["bg_dark"],
+                         fg=self.colors["text_muted"]).pack(expand=True)
+                return
+
+            from collections import defaultdict
+            ann_by_img = defaultdict(list)
+            for ann in ctx_anns:
+                if not isinstance(ann, dict):
+                    continue
+                img_id = str(ann.get("image_id", "")).strip()
+                bbox_raw = ann.get("bbox")
+                label = str(ann.get("label", "") or ann.get("text", "") or "?")
+                if not img_id:
+                    continue
+                # Normalise bbox to [x, y, w, h] floats
+                bbox = None
+                if bbox_raw:
+                    try:
+                        bbox = [float(b) for b in bbox_raw]
+                    except (ValueError, TypeError):
+                        bbox = None
+                ann_entry = {
+                    "label": label,
+                    "score": float(ann.get("score", 0) or 0),
+                }
+                if bbox:
+                    ann_entry["bbox"] = bbox
+                # Index by multiple keys so lookup is resilient
+                img_id_lower = img_id.lower()
+                img_id_noext = os.path.splitext(img_id_lower)[0]
+                ann_by_img[img_id_lower].append(ann_entry)
+                if img_id_noext != img_id_lower:
+                    ann_by_img[img_id_noext].append(ann_entry)
+
+            # Match every loaded image to its grouped annotations
+            # (include ALL images — those without annotations get empty list)
+            self._char_images = []
+            self._char_annotations = {}
+            for img_path in imgs:
+                fname_lower = os.path.basename(img_path).lower()
+                fname_noext = os.path.splitext(fname_lower)[0]
+                # Try full basename, then without extension
+                anns = ann_by_img.get(fname_lower) or ann_by_img.get(fname_noext) or []
+                idx = len(self._char_images)
+                self._char_images.append(img_path)
+                self._char_annotations[idx] = list(anns)
+
+        if not self._char_images:
             tk.Label(self._body,
-                     text="No images loaded.\n"
-                          "Complete Dataset Ingestion first.",
+                     text="No images with character annotations found.",
                      font=("Segoe UI", 12), bg=self.colors["bg_dark"],
                      fg=self.colors["text_muted"]).pack(expand=True)
             return
 
-        if not char_boxes:
-            tk.Label(self._body,
-                     text="No characters detected.\n"
-                          "Run Character Detection in Preprocessing first.",
-                     font=("Segoe UI", 12), bg=self.colors["bg_dark"],
-                     fg=self.colors["text_muted"]).pack(expand=True)
-            return
+        # -- state --
+        self._page_mode = "character"
+        self._page = 0
+        self._selected_char_img = 0
 
-        try:
-            original_img = Image.open(image_path)
-        except Exception as e:
-            tk.Label(self._body, text=f"Cannot load image: {e}",
-                     font=("Segoe UI", 11), bg=self.colors["bg_dark"],
-                     fg='#cc0000').pack(expand=True)
-            return
-
-        canvas, scroll_frame = self._make_scrollable(self._body)
+        # Override effective page size for this mode
+        self._saved_page_size = self.PAGE_SIZE
+        self.PAGE_SIZE = self.CHAR_PAGE_SIZE
 
         # Header
-        hdr = tk.Frame(scroll_frame, bg='#6cb6ff', padx=10, pady=8)
-        hdr.pack(fill=tk.X, pady=(0, 10))
+        total_anns = sum(len(v) for v in self._char_annotations.values())
+        hdr = tk.Frame(self._body, bg='#6cb6ff', padx=10, pady=8)
+        hdr.pack(fill=tk.X, padx=10, pady=(0, 0))
         tk.Label(hdr,
-                 text=f"🔤 Character Annotation — {len(char_boxes)} characters",
+                 text=f"\U0001f524 Character Annotation \u2014 "
+                      f"{len(self._char_images)} images, "
+                      f"{total_anns} characters",
                  font=('Segoe UI', 12, 'bold'),
                  bg='#6cb6ff', fg='white').pack(side=tk.LEFT)
 
-        for i, ch_info in enumerate(char_boxes):
-            x1, y1, x2, y2 = ch_info['coords']
-            label = ch_info.get('label', '?')
-            score = ch_info.get('score', 0)
+        # Pagination
+        self._pagination_bar = self._build_pagination_bar(
+            self._body, len(self._char_images))
 
-            cf = tk.Frame(scroll_frame, bg='white', relief=tk.RIDGE, bd=1)
-            cf.pack(fill=tk.X, padx=10, pady=3)
+        # Page container (holds the split pane)
+        self._page_container = tk.Frame(self._body, bg=self.colors["bg_dark"])
+        self._page_container.pack(fill=tk.BOTH, expand=True)
+
+        self._render_char_page()
+
+    # ------------------------------------------------------------------
+    def _render_char_page(self):
+        """Render one page of images (left) + label editor (right)."""
+        for w in self._page_container.winfo_children():
+            w.destroy()
+        self._photo_refs.clear()
+        self._entries.clear()
+        self._scroll_canvas = None
+
+        total = len(self._char_images)
+        start = self._page * self.PAGE_SIZE
+        end = min(start + self.PAGE_SIZE, total)
+
+        # ---- split pane ------------------------------------------------
+        paned = tk.PanedWindow(self._page_container, orient=tk.HORIZONTAL,
+                               sashwidth=5, bg='#cccccc')
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        # LEFT: scrollable image list with drawn bboxes
+        left_outer = tk.Frame(paned, bg='#f4f7fb')
+        paned.add(left_outer, minsize=420, stretch="always")
+
+        left_canvas = tk.Canvas(left_outer, bg='#f4f7fb',
+                                highlightthickness=0)
+        left_vsb = tk.Scrollbar(left_outer, orient="vertical",
+                                command=left_canvas.yview)
+        left_inner = tk.Frame(left_canvas, bg='#f4f7fb')
+        left_inner.bind(
+            "<Configure>",
+            lambda e: left_canvas.configure(
+                scrollregion=left_canvas.bbox("all")))
+        left_canvas.create_window((0, 0), window=left_inner, anchor="nw")
+        left_canvas.configure(yscrollcommand=left_vsb.set)
+        left_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._char_left_canvas = left_canvas
+        self._char_img_frames = {}
+
+        for local_idx in range(end - start):
+            global_idx = start + local_idx
+            img_path = self._char_images[global_idx]
+            anns = self._char_annotations.get(global_idx, [])
+
+            img_frame = tk.Frame(left_inner, bg='white',
+                                 relief=tk.RIDGE, bd=2, cursor="hand2")
+            img_frame.pack(fill=tk.X, padx=8, pady=4)
+            self._char_img_frames[global_idx] = img_frame
+
+            fname = os.path.basename(img_path)
+            tk.Label(img_frame,
+                     text=f"Image {global_idx + 1}: {fname}  "
+                          f"({len(anns)} chars)",
+                     font=('Segoe UI', 10, 'bold'),
+                     bg='white', fg='#333').pack(anchor='w', padx=8,
+                                                  pady=(4, 2))
 
             try:
-                crop = original_img.crop((x1, y1, x2, y2))
-                cw, ch_h = crop.size
-                target_h = 50
-                if ch_h > 0:
-                    sc = target_h / ch_h
-                    crop = crop.resize((max(20, int(cw * sc)), target_h),
-                                       Image.LANCZOS)
-                photo = ImageTk.PhotoImage(crop)
+                img = Image.open(img_path).convert("RGB")
+                img = self._draw_char_bboxes(img, anns)
+                cw, ch = img.size
+                max_w = 500
+                if cw > max_w:
+                    scale = max_w / cw
+                    img = img.resize((max_w, int(ch * scale)),
+                                     Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
                 self._photo_refs.append(photo)
-                tk.Label(cf, image=photo, bg='white',
-                         relief=tk.SUNKEN, bd=1).pack(side=tk.LEFT,
-                                                       padx=5, pady=5)
+                lbl = tk.Label(img_frame, image=photo, bg='white',
+                               cursor="hand2")
+                lbl.pack(padx=8, pady=4)
+                lbl.bind("<Button-1>",
+                         lambda e, idx=global_idx: self._select_char_image(idx))
             except Exception:
-                tk.Label(cf, text="[img]",
-                         bg='white').pack(side=tk.LEFT, padx=5, pady=5)
+                tk.Label(img_frame, text="[Cannot load image]",
+                         bg='white').pack(padx=8, pady=4)
 
-            info = tk.Frame(cf, bg='white')
-            info.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+            img_frame.bind(
+                "<Button-1>",
+                lambda e, idx=global_idx: self._select_char_image(idx))
 
-            tk.Label(info, text=f"#{i + 1}",
-                     font=('Segoe UI', 9, 'bold'),
-                     bg='white', fg='#666', width=4).pack(side=tk.LEFT)
+        # RIGHT: label editor placeholder
+        right_frame = tk.Frame(paned, bg='#f8f9fa')
+        paned.add(right_frame, minsize=280, stretch="never")
+        self._char_right_frame = right_frame
 
-            entry = tk.Entry(info, font=('Segoe UI', 11, 'bold'),
-                             width=5, justify='center')
-            entry.insert(0, label)
-            entry.pack(side=tk.LEFT, padx=5)
+        # Select first image of this page by default
+        if total > 0:
+            self._select_char_image(start)
+        else:
+            tk.Label(right_frame,
+                     text="No images with annotations",
+                     font=('Segoe UI', 11), bg='#f8f9fa',
+                     fg='#666').pack(expand=True)
+
+        # Scroll binding scoped to left pane
+        def _on_enter_left(event):
+            left_canvas.bind_all(
+                "<MouseWheel>",
+                lambda e: left_canvas.yview_scroll(
+                    int(-1 * (e.delta / 120)), "units"))
+
+        def _on_leave_left(event):
+            left_canvas.unbind_all("<MouseWheel>")
+
+        left_outer.bind("<Enter>", _on_enter_left)
+        left_outer.bind("<Leave>", _on_leave_left)
+
+        self._update_page_info(total)
+
+    # ------------------------------------------------------------------
+    def _select_char_image(self, global_idx):
+        """Populate the right-side label editor for *global_idx* image."""
+        self._sync_char_entries()          # save previous edits
+        self._selected_char_img = global_idx
+
+        # Highlight selected image frame
+        for idx, frm in self._char_img_frames.items():
+            frm.config(bg='#e0e0e0' if idx == global_idx else 'white')
+
+        # Clear right panel
+        for w in self._char_right_frame.winfo_children():
+            w.destroy()
+        self._entries.clear()
+
+        anns = self._char_annotations.get(global_idx, [])
+        fname = os.path.basename(self._char_images[global_idx])
+
+        # ---- header ----
+        hdr = tk.Frame(self._char_right_frame, bg='#5a9fd4',
+                       padx=10, pady=8)
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text=f"\U0001f4dd {fname}",
+                 font=('Segoe UI', 11, 'bold'),
+                 bg='#5a9fd4', fg='white').pack(anchor='w')
+        tk.Label(hdr, text=f"{len(anns)} annotation(s)",
+                 font=('Segoe UI', 9),
+                 bg='#5a9fd4', fg='#e0e0e0').pack(anchor='w')
+
+        # ---- scrollable annotation list ----
+        right_canvas = tk.Canvas(self._char_right_frame, bg='#f8f9fa',
+                                 highlightthickness=0)
+        right_vsb = tk.Scrollbar(self._char_right_frame, orient="vertical",
+                                 command=right_canvas.yview)
+        right_inner = tk.Frame(right_canvas, bg='#f8f9fa')
+        right_inner.bind(
+            "<Configure>",
+            lambda e: right_canvas.configure(
+                scrollregion=right_canvas.bbox("all")))
+        right_canvas.create_window((0, 0), window=right_inner, anchor="nw")
+        right_canvas.configure(yscrollcommand=right_vsb.set)
+        right_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        palette = ["#FF3333", "#33BB33", "#3333FF", "#FF8800",
+                   "#CC00CC", "#00BBBB", "#888800", "#880088",
+                   "#33CCFF", "#FF6699"]
+
+        for i, ann in enumerate(anns):
+            row = tk.Frame(right_inner, bg='white', relief=tk.RIDGE, bd=1)
+            row.pack(fill=tk.X, padx=4, pady=2)
+
+            # Color swatch matching bbox color on the image
+            color = palette[i % len(palette)]
+            swatch = tk.Canvas(row, width=12, height=12, bg='white',
+                               highlightthickness=0)
+            swatch.create_rectangle(1, 1, 12, 12, fill=color, outline=color)
+            swatch.pack(side=tk.LEFT, padx=(4, 2))
+
+            tk.Label(row, text=f"#{i + 1}",
+                     font=('Segoe UI', 9, 'bold'), bg='white',
+                     fg='#666', width=4).pack(side=tk.LEFT, padx=(2, 2))
+
+            entry = tk.Entry(row, font=('Segoe UI', 10, 'bold'),
+                             width=6, justify='center')
+            entry.insert(0, ann.get("label", "?"))
+            entry.pack(side=tk.LEFT, padx=4)
             self._entries.append(entry)
 
-            if score > 0:
-                tk.Label(info, text=f"({score:.2f})",
-                         font=('Segoe UI', 8), bg='white',
-                         fg='#999').pack(side=tk.LEFT, padx=5)
-
-            coords_text = f"[{x1},{y1},{x2 - x1}x{y2 - y1}]"
-            tk.Label(info, text=coords_text,
+            bbox = ann.get("bbox")
+            if bbox and len(bbox) >= 4:
+                bbox_text = (f"[{int(float(bbox[0]))},{int(float(bbox[1]))},"
+                             f"{int(float(bbox[2]))},{int(float(bbox[3]))}]")
+            else:
+                bbox_text = "[no bbox]"
+            tk.Label(row, text=bbox_text,
                      font=('Segoe UI', 8), bg='white',
-                     fg='#aaa').pack(side=tk.LEFT, padx=5)
+                     fg='#aaa').pack(side=tk.LEFT, padx=4)
 
-        self._ann_image_path = image_path
-        self._ann_char_boxes = char_boxes
+            score = ann.get("score", 0)
+            if score > 0:
+                tk.Label(row, text=f"({score:.2f})",
+                         font=('Segoe UI', 8), bg='white',
+                         fg='#999').pack(side=tk.LEFT, padx=2)
 
-        self._build_action_buttons(scroll_frame, mode="character")
+        # ---- action buttons (bottom of right pane) ----
+        bf = tk.Frame(self._char_right_frame, bg='#f8f9fa',
+                      padx=5, pady=8)
+        bf.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Button(bf, text="\u2714 Apply",
+                  command=lambda gidx=global_idx: self._apply_char_label_edits(gidx),
+                  bg='#28a745', fg='white',
+                  font=('Segoe UI', 9, 'bold'),
+                  padx=10, pady=4).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="\U0001f4be Save JSON",
+                  command=lambda: self._save_json("character"),
+                  bg='#6cb6ff', fg='white',
+                  font=('Segoe UI', 9, 'bold'),
+                  padx=10, pady=4).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="\U0001f4c4 Export IAM",
+                  command=lambda: self._export_iam("character"),
+                  bg='#5a9fd4', fg='white',
+                  font=('Segoe UI', 9, 'bold'),
+                  padx=10, pady=4).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="\U0001f5d1 Clear All",
+                  command=self._clear_entries,
+                  bg='#dc3545', fg='white',
+                  font=('Segoe UI', 9, 'bold'),
+                  padx=10, pady=4).pack(side=tk.RIGHT, padx=4)
+
+        # Scroll binding scoped to right pane
+        right_outer = self._char_right_frame
+
+        def _on_enter_right(event):
+            right_canvas.bind_all(
+                "<MouseWheel>",
+                lambda e: right_canvas.yview_scroll(
+                    int(-1 * (e.delta / 120)), "units"))
+
+        def _on_leave_right(event):
+            right_canvas.unbind_all("<MouseWheel>")
+
+        right_outer.bind("<Enter>", _on_enter_right)
+        right_outer.bind("<Leave>", _on_leave_right)
+
+    # ------------------------------------------------------------------
+    def _sync_char_entries(self):
+        """Save current right-panel edits back into _char_annotations."""
+        if not hasattr(self, '_selected_char_img'):
+            return
+        idx = self._selected_char_img
+        anns = getattr(self, '_char_annotations', {}).get(idx, [])
+        for i, entry in enumerate(self._entries):
+            if i < len(anns):
+                try:
+                    anns[i]["label"] = entry.get().strip()
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    def _apply_char_label_edits(self, global_idx):
+        """Sync right-panel edits into data, then refresh the image in the
+        left pane so bbox labels are redrawn to match edits."""
+        self._sync_char_entries()
+        # Redraw only the image frame for global_idx
+        frm = self._char_img_frames.get(global_idx)
+        if not frm:
+            return
+        img_path = self._char_images[global_idx]
+        anns = self._char_annotations.get(global_idx, [])
+        # Remove old image label widget (keep the title label)
+        children = frm.winfo_children()
+        for child in children[1:]:  # first child is the title label
+            child.destroy()
+        # Redraw image with updated labels
+        try:
+            img = Image.open(img_path).convert("RGB")
+            img = self._draw_char_bboxes(img, anns)
+            cw, ch = img.size
+            max_w = 500
+            if cw > max_w:
+                scale = max_w / cw
+                img = img.resize((max_w, int(ch * scale)), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._photo_refs.append(photo)
+            lbl = tk.Label(frm, image=photo, bg='white', cursor="hand2")
+            lbl.pack(padx=8, pady=4)
+            lbl.bind("<Button-1>",
+                     lambda e, idx=global_idx: self._select_char_image(idx))
+        except Exception:
+            tk.Label(frm, text="[Cannot load image]",
+                     bg='white').pack(padx=8, pady=4)
+
+    # ------------------------------------------------------------------
+    def _draw_char_bboxes(self, img, annotations):
+        """Return *img* with character bounding boxes and labels drawn."""
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("arial.ttf", 13)
+        except Exception:
+            font = ImageFont.load_default()
+
+        palette = ["#FF3333", "#33BB33", "#3333FF", "#FF8800",
+                   "#CC00CC", "#00BBBB", "#888800", "#880088",
+                   "#33CCFF", "#FF6699"]
+
+        for i, ann in enumerate(annotations):
+            bbox = ann.get("bbox")
+            if not bbox:
+                continue
+            label = ann.get("label", "?")
+            color = palette[i % len(palette)]
+
+            try:
+                x, y, w, h = [float(v) for v in bbox]
+            except (ValueError, TypeError):
+                continue
+            draw.rectangle([x, y, x + w, y + h], outline=color, width=2)
+
+            # Label tag above the box
+            try:
+                tb = draw.textbbox((x, max(0, y - 16)), label, font=font)
+                draw.rectangle(
+                    [tb[0] - 1, tb[1] - 1, tb[2] + 1, tb[3] + 1],
+                    fill=color)
+                draw.text((x, max(0, y - 16)), label,
+                          fill="white", font=font)
+            except Exception:
+                draw.text((x, max(0, y - 14)), label,
+                          fill=color, font=font)
+
+        return img
 
     # ==================================================================
     # Action buttons (shared by all modes)
@@ -831,7 +1281,12 @@ class AnnotationPanel(tk.Frame):
         for e in self._entries:
             e.delete(0, tk.END)
         # Also clear master annotations for paginated modes
-        if self._page_mode:
+        if self._page_mode == "character":
+            idx = getattr(self, '_selected_char_img', 0)
+            anns = getattr(self, '_char_annotations', {}).get(idx, [])
+            for ann in anns:
+                ann["label"] = ""
+        elif self._page_mode:
             offset = self._page * self.PAGE_SIZE
             for i in range(len(self._entries)):
                 self._all_annotations.pop(offset + i, None)
@@ -916,21 +1371,28 @@ class AnnotationPanel(tk.Frame):
                     "lines": lines_out
                 }
         elif mode == "character":
-            img_path = self._ann_image_path or ''
-            boxes = self._ann_char_boxes
-            chars_out = []
-            for i, e in enumerate(self._entries):
-                b = boxes[i] if i < len(boxes) else {}
-                coords = b.get('coords', (0, 0, 0, 0))
-                chars_out.append({
-                    "char_id": i,
-                    "label": e.get().strip(),
-                    "coords": [int(c) for c in coords]
+            self._sync_char_entries()
+            images_out = []
+            char_imgs = getattr(self, '_char_images', [])
+            char_anns = getattr(self, '_char_annotations', {})
+            for i, img_path in enumerate(char_imgs):
+                anns = char_anns.get(i, [])
+                chars = []
+                for j, ann in enumerate(anns):
+                    raw_bb = ann.get("bbox")
+                    bbox_out = [int(float(b)) for b in raw_bb] if raw_bb else [0, 0, 0, 0]
+                    chars.append({
+                        "char_id": j,
+                        "label": ann.get("label", ""),
+                        "bbox": bbox_out
+                    })
+                images_out.append({
+                    "image": os.path.basename(img_path),
+                    "characters": chars
                 })
             data = {
                 "mode": "character",
-                "image": os.path.basename(img_path),
-                "characters": chars_out
+                "images": images_out
             }
 
         try:
@@ -1006,14 +1468,30 @@ class AnnotationPanel(tk.Frame):
                 total = sum(1 for l in lines_out if l.get('text','').strip())
 
         else:  # character
-            boxes = self._ann_char_boxes
-            chars_out = []
-            for i, e in enumerate(self._entries):
-                b = boxes[i] if i < len(boxes) else {}
-                coords = b.get('coords', (0,0,0,0))
-                chars_out.append({'char_id': i, 'label': e.get().strip(), 'coords':[int(c) for c in coords]})
-            data = {'mode':'character', 'image': os.path.basename(self._ann_image_path or ''), 'characters': chars_out}
-            total = sum(1 for c in chars_out if c.get('label','').strip())
+            self._sync_char_entries()
+            char_imgs = getattr(self, '_char_images', [])
+            char_anns = getattr(self, '_char_annotations', {})
+            images_out = []
+            total = 0
+            for i, img_path in enumerate(char_imgs):
+                anns = char_anns.get(i, [])
+                chars = []
+                for j, ann in enumerate(anns):
+                    label = ann.get("label", "").strip()
+                    raw_bb = ann.get("bbox")
+                    bbox_out = [int(float(b)) for b in raw_bb] if raw_bb else [0, 0, 0, 0]
+                    chars.append({
+                        'char_id': j,
+                        'label': label,
+                        'bbox': bbox_out
+                    })
+                    if label:
+                        total += 1
+                images_out.append({
+                    'image': os.path.basename(img_path),
+                    'characters': chars
+                })
+            data = {'mode': 'character', 'images': images_out}
 
         return data, total, mode
 
@@ -1095,12 +1573,16 @@ class AnnotationPanel(tk.Frame):
                                  if i < len(imgs) else f"line{i:03d}")
                         lines_out.append(f"{fname} {t}")
         elif mode == "character":
-            img_path = self._ann_image_path or ''
-            base = os.path.splitext(os.path.basename(img_path))[0]
-            for i, e in enumerate(self._entries):
-                t = e.get().strip()
-                if t:
-                    lines_out.append(f"{base}-char{i:04d} {t}")
+            self._sync_char_entries()
+            char_imgs = getattr(self, '_char_images', [])
+            char_anns = getattr(self, '_char_annotations', {})
+            for i, img_path in enumerate(char_imgs):
+                base = os.path.splitext(os.path.basename(img_path))[0]
+                anns = char_anns.get(i, [])
+                for j, ann in enumerate(anns):
+                    label = ann.get("label", "").strip()
+                    if label:
+                        lines_out.append(f"{base}-char{j:04d} {label}")
 
         try:
             with open(save_path, 'w', encoding='utf-8') as f:

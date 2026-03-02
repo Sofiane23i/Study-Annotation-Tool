@@ -1740,7 +1740,23 @@ class IngestionPanel(tk.Frame):
             if os.path.isfile(candidate):
                 ann_file = candidate
 
-        has_ann = ann_file is not None
+        # Check for per-image VOC XML sidecar annotations
+        has_voc_xml = False
+        if ann_file is None:
+            # Look for .xml files next to the loaded images
+            for img_path in images[:20]:  # sample first 20 images
+                stem = os.path.splitext(img_path)[0]
+                xml_candidate = stem + ".xml"
+                if os.path.isfile(xml_candidate):
+                    has_voc_xml = True
+                    break
+            if not has_voc_xml:
+                # Also check inside the folder itself
+                xml_files = glob.glob(os.path.join(folder, "*.xml"))
+                if xml_files:
+                    has_voc_xml = True
+
+        has_ann = ann_file is not None or has_voc_xml
 
         # Determine dataset type label
         ds_type = "annotated" if has_ann else "raw"
@@ -1754,7 +1770,11 @@ class IngestionPanel(tk.Frame):
         self.ctx["folder_structure"] = folder_struct
         self.ctx["metadata"]["has_annotations"] = has_ann
 
-        if has_ann:
+        if has_voc_xml and ann_file is None:
+            # Per-image VOC XML — parse directly as VOC format
+            self._parse_annotation_file(None, fmt="voc",
+                                        image_dir=folder, images=images)
+        elif has_ann and ann_file:
             self._parse_annotation_file(ann_file, fmt="auto",
                                         image_dir=folder, images=images)
 
@@ -1909,6 +1929,47 @@ class IngestionPanel(tk.Frame):
                         for line in f:
                             if line.strip():
                                 annotations.append(json.loads(line))
+                elif ext == ".xml":
+                    # Try parsing as a single VOC-style XML first
+                    import xml.etree.ElementTree as ET
+                    try:
+                        tree = ET.parse(path)
+                        root = tree.getroot()
+                        objects = root.findall("object")
+                        if objects:
+                            # Single VOC XML file
+                            filename = os.path.basename(path)
+                            fn_el = root.find("filename")
+                            if fn_el is not None and fn_el.text:
+                                filename = fn_el.text
+                            for obj in objects:
+                                name_el = obj.find("name")
+                                label = name_el.text if name_el is not None else "unknown"
+                                bb = obj.find("bndbox")
+                                if bb is None:
+                                    continue
+                                try:
+                                    xmin = float(bb.findtext("xmin", "0"))
+                                    ymin = float(bb.findtext("ymin", "0"))
+                                    xmax = float(bb.findtext("xmax", "0"))
+                                    ymax = float(bb.findtext("ymax", "0"))
+                                except ValueError:
+                                    continue
+                                annotations.append({
+                                    "image_id": os.path.basename(filename),
+                                    "label": label,
+                                    "bbox": [xmin, ymin, xmax - xmin, ymax - ymin],
+                                })
+                        else:
+                            # Try per-image VOC: use parent dir as image dir
+                            xml_dir = os.path.dirname(os.path.abspath(path))
+                            img_list = images or self._scan_images(
+                                image_dir or xml_dir)
+                            if img_list:
+                                annotations, writers = self._parse_voc_annotations(
+                                    image_dir or xml_dir, img_list)
+                    except ET.ParseError:
+                        pass
         except Exception as e:
             messagebox.showerror("Parse Error",
                                  f"Failed to parse annotation file:\n{e}")
@@ -2028,17 +2089,32 @@ class IngestionPanel(tk.Frame):
         writers: set = set()
 
         for img_path in images:
+            stem = os.path.splitext(os.path.basename(img_path))[0]
             base = os.path.splitext(img_path)[0]
             xml_path = base + ".xml"
             if not os.path.isfile(xml_path):
-                # Also try an Annotations/ sibling folder (common VOC layout)
-                parent = os.path.dirname(img_path)
-                ann_dir = os.path.join(os.path.dirname(parent), "Annotations")
-                candidate = os.path.join(
-                    ann_dir, os.path.splitext(os.path.basename(img_path))[0] + ".xml")
-                if os.path.isfile(candidate):
-                    xml_path = candidate
-                else:
+                # Search multiple candidate locations for the sidecar XML
+                candidates = []
+                img_parent = os.path.dirname(img_path)
+                # 1) Same folder as the image
+                candidates.append(os.path.join(img_parent, stem + ".xml"))
+                # 2) image_dir root (if different from img parent)
+                if image_dir and os.path.normcase(os.path.abspath(image_dir)) != os.path.normcase(os.path.abspath(img_parent)):
+                    candidates.append(os.path.join(image_dir, stem + ".xml"))
+                # 3) Annotations/ sibling folder (common VOC layout)
+                ann_dir = os.path.join(os.path.dirname(img_parent), "Annotations")
+                candidates.append(os.path.join(ann_dir, stem + ".xml"))
+                # 4) Annotations/ under image_dir
+                if image_dir:
+                    candidates.append(os.path.join(image_dir, "Annotations", stem + ".xml"))
+                    candidates.append(os.path.join(image_dir, "annotations", stem + ".xml"))
+                found = False
+                for candidate in candidates:
+                    if os.path.isfile(candidate):
+                        xml_path = candidate
+                        found = True
+                        break
+                if not found:
                     continue
             try:
                 tree = ET.parse(xml_path)
