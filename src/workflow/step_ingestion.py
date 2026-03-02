@@ -20,6 +20,184 @@ import threading
 import state as S
 
 
+class DatasetFolderDialog(tk.Toplevel):
+    """Dialog for selecting folder structure when loading a dataset."""
+
+    def __init__(self, parent, colors):
+        super().__init__(parent)
+        self.title("Load Dataset — Folder Structure")
+        self.geometry("500x230")
+        self.resizable(False, False)
+        self.configure(bg=colors["bg_dark"])
+        self.colors = colors
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        # --- Header ---
+        hdr = tk.Frame(self, bg=colors["bg_section"], pady=10, padx=14)
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text="📂  Load Dataset",
+                 font=("Segoe UI", 13, "bold"),
+                 bg=colors["bg_section"], fg=colors["text_light"]).pack(anchor="w")
+        tk.Label(hdr, text="Choose how your image folder is organised, then pick a folder.",
+                 font=("Segoe UI", 9), bg=colors["bg_section"],
+                 fg=colors["text_muted"]).pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(self, bg=colors["bg_dark"], padx=14, pady=10)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # --- Folder Structure ---
+        struct_frame = tk.LabelFrame(body, text=" 📁 Folder Structure ",
+                                      font=("Segoe UI", 10, "bold"),
+                                      bg=colors["bg_section"],
+                                      fg=colors["text_light"],
+                                      relief=tk.GROOVE, bd=1, padx=10, pady=8)
+        struct_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.struct_var = tk.StringVar(value="flat")
+        structures = [
+            ("flat", "Flat folder",
+             "All images in a single folder"),
+            ("subfolders", "Sub-folder structure (IAM-style)",
+             "Images organised in nested sub-folders (e.g. writer/form/…)"),
+        ]
+        for val, label, desc in structures:
+            row = tk.Frame(struct_frame, bg=colors["bg_section"])
+            row.pack(fill=tk.X, pady=1)
+            tk.Radiobutton(row, text=label, variable=self.struct_var, value=val,
+                           font=("Segoe UI", 9, "bold"),
+                           bg=colors["bg_section"], fg=colors["text_light"],
+                           activebackground=colors["bg_section"],
+                           selectcolor=colors["bg_dark"]).pack(side=tk.LEFT)
+            tk.Label(row, text=f"  — {desc}", font=("Segoe UI", 8),
+                     bg=colors["bg_section"],
+                     fg=colors["text_muted"]).pack(side=tk.LEFT)
+
+        # --- Buttons ---
+        btn_row = tk.Frame(body, bg=colors["bg_dark"])
+        btn_row.pack(fill=tk.X, pady=(6, 0))
+
+        tk.Button(btn_row, text="Cancel", command=self._cancel,
+                  font=("Segoe UI", 9), bg="#e0e0e0", fg="#333",
+                  relief=tk.FLAT, padx=16, pady=5,
+                  cursor="hand2").pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Button(btn_row, text="📂 Select Folder & Load",
+                  command=self._ok,
+                  font=("Segoe UI", 10, "bold"),
+                  bg=colors["accent"], fg="white",
+                  activebackground=colors.get("accent_hover", "#005fc5"),
+                  relief=tk.FLAT, padx=16, pady=5,
+                  cursor="hand2").pack(side=tk.RIGHT)
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.update_idletasks()
+        pw = parent.winfo_width(); ph = parent.winfo_height()
+        px = parent.winfo_rootx(); py = parent.winfo_rooty()
+        w = self.winfo_width(); h = self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+    def _ok(self):
+        self.result = {"folder_structure": self.struct_var.get()}
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+
+class AnnotationFormatDialog(tk.Toplevel):
+    """Dialog for selecting annotation format when loading an annotation file."""
+
+    def __init__(self, parent, colors):
+        super().__init__(parent)
+        self.title("Load Annotation — Format")
+        self.geometry("520x340")
+        self.resizable(False, False)
+        self.configure(bg=colors["bg_dark"])
+        self.colors = colors
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        # --- Header ---
+        hdr = tk.Frame(self, bg=colors["bg_section"], pady=10, padx=14)
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text="📝  Load Annotation",
+                 font=("Segoe UI", 13, "bold"),
+                 bg=colors["bg_section"], fg=colors["text_light"]).pack(anchor="w")
+        tk.Label(hdr, text="Choose the annotation format, then select the file.",
+                 font=("Segoe UI", 9), bg=colors["bg_section"],
+                 fg=colors["text_muted"]).pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(self, bg=colors["bg_dark"], padx=14, pady=10)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # --- Annotation Format ---
+        fmt_frame = tk.LabelFrame(body, text=" 📝 Annotation Format ",
+                                   font=("Segoe UI", 10, "bold"),
+                                   bg=colors["bg_section"],
+                                   fg=colors["text_light"],
+                                   relief=tk.GROOVE, bd=1, padx=10, pady=8)
+        fmt_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.fmt_var = tk.StringVar(value="iam")
+        formats = [
+            ("iam", "IAM Format",
+             "word/line-level .txt (image ok writer x y w h text)"),
+            ("coco", "COCO JSON (Object Detection)",
+             "Standard COCO .json with images, annotations, categories"),
+            ("yolo", "YOLO (Object Detection)",
+             ".txt per image — class xc yc w h (normalised)"),
+            ("voc", "Pascal VOC XML (Object Detection)",
+             "One .xml per image with <object><bndbox> elements"),
+            ("auto", "Auto-Detect",
+             "Let the tool guess the format from the files found"),
+        ]
+        for val, label, desc in formats:
+            row = tk.Frame(fmt_frame, bg=colors["bg_section"])
+            row.pack(fill=tk.X, pady=1)
+            tk.Radiobutton(row, text=label, variable=self.fmt_var, value=val,
+                           font=("Segoe UI", 9, "bold"),
+                           bg=colors["bg_section"], fg=colors["text_light"],
+                           activebackground=colors["bg_section"],
+                           selectcolor=colors["bg_dark"]).pack(side=tk.LEFT)
+            tk.Label(row, text=f"  — {desc}", font=("Segoe UI", 8),
+                     bg=colors["bg_section"],
+                     fg=colors["text_muted"]).pack(side=tk.LEFT)
+
+        # --- Buttons ---
+        btn_row = tk.Frame(body, bg=colors["bg_dark"])
+        btn_row.pack(fill=tk.X, pady=(6, 0))
+
+        tk.Button(btn_row, text="Cancel", command=self._cancel,
+                  font=("Segoe UI", 9), bg="#e0e0e0", fg="#333",
+                  relief=tk.FLAT, padx=16, pady=5,
+                  cursor="hand2").pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Button(btn_row, text="📝 Select File & Load",
+                  command=self._ok,
+                  font=("Segoe UI", 10, "bold"),
+                  bg="#5c6bc0", fg="white",
+                  activebackground="#3f51b5",
+                  relief=tk.FLAT, padx=16, pady=5,
+                  cursor="hand2").pack(side=tk.RIGHT)
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.update_idletasks()
+        pw = parent.winfo_width(); ph = parent.winfo_height()
+        px = parent.winfo_rootx(); py = parent.winfo_rooty()
+        w = self.winfo_width(); h = self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+    def _ok(self):
+        self.result = {"annotation_format": self.fmt_var.get()}
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class IngestionPanel(tk.Frame):
     """Dataset ingestion with four loading options and preview."""
 
@@ -127,7 +305,7 @@ class IngestionPanel(tk.Frame):
                  bg=self.colors["bg_section"], fg=self.colors["text_light"],
                  anchor="w").pack(fill=tk.X)
         tk.Label(txt,
-                 text="Select an image folder. Annotations are auto-detected.",
+                 text="Select format (IAM / Object Detection) & folder structure.",
                  font=("Segoe UI", 8),
                  bg=self.colors["bg_section"], fg=self.colors["text_muted"],
                  anchor="w", wraplength=160).pack(fill=tk.X)
@@ -204,26 +382,66 @@ class IngestionPanel(tk.Frame):
         self.btn_goto_preprocessing.pack(side=tk.LEFT)
 
     def _browse_annotation_file(self):
-        """Open a file dialog to select an annotation file."""
-        filetypes = [
-            ("Annotation files", "*.json *.txt *.csv *.jsonl"),
-            ("JSON files", "*.json"),
-            ("Text files", "*.txt"),
-            ("CSV files", "*.csv"),
-            ("All files", "*.*"),
-        ]
+        """Show annotation format dialog, then open a file dialog to select an annotation file."""
+        # --- Show annotation format dialog ---
+        dlg = AnnotationFormatDialog(self, self.colors)
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+
+        ann_format = dlg.result["annotation_format"]  # iam|coco|yolo|voc|auto
+
+        # For per-image formats (YOLO / VOC) the user selects a folder
+        # containing the images + their sidecar annotation files.
+        if ann_format in ("yolo", "voc"):
+            folder = filedialog.askdirectory(
+                title="Select folder with images and annotation files")
+            if not folder:
+                return
+            images = self.ctx.get("images") or self._scan_images(folder)
+            self._parse_annotation_file(None, fmt=ann_format,
+                                        image_dir=folder, images=images)
+            self.ctx["annotation_format"] = ann_format
+            self.ctx["metadata"]["has_annotations"] = True
+            ann_count = len(self.ctx.get("annotations", []))
+            self.ann_card_info.set(
+                f"✅ {ann_format.upper()} ({ann_count} entries)")
+            if self._annotation_matches_dataset():
+                self._show_annotation_actions()
+            else:
+                self._hide_annotation_actions()
+            return
+
+        # For single-file formats, build appropriate file-type filter
+        if ann_format == "iam":
+            filetypes = [("IAM text files", "*.txt"), ("All files", "*.*")]
+        elif ann_format == "coco":
+            filetypes = [("COCO JSON files", "*.json"), ("All files", "*.*")]
+        else:  # auto
+            filetypes = [
+                ("Annotation files", "*.json *.txt *.csv *.jsonl *.xml"),
+                ("JSON files", "*.json"),
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*"),
+            ]
+
         path = filedialog.askopenfilename(
             title="Select Annotation File", filetypes=filetypes)
         if not path:
             return
 
-        # Parse the annotation file
-        self._parse_annotation_file(path)
+        # Parse the annotation file with the chosen format
+        self._parse_annotation_file(path, fmt=ann_format,
+                                    image_dir=self.ctx.get("image_dir", ""),
+                                    images=self.ctx.get("images"))
         self.ctx["annotation_file"] = path
+        self.ctx["annotation_format"] = ann_format
         self.ctx["metadata"]["has_annotations"] = True
 
         ann_count = len(self.ctx.get("annotations", []))
         self.ann_card_info.set(f"✅ {os.path.basename(path)} ({ann_count} entries)")
+        self._update_meta_cards()
 
         # Check if annotation relates to the loaded image folder
         if self._annotation_matches_dataset():
@@ -235,6 +453,7 @@ class IngestionPanel(tk.Frame):
                 "The annotation file does not appear to match the loaded "
                 "image folder.\n\nPlease load the correct image folder first, "
                 "or load an annotation file that corresponds to the current dataset.")
+        self._update_annotation_preview()
 
     def _annotation_matches_dataset(self) -> bool:
         """Check whether the loaded annotation file relates to the current dataset."""
@@ -308,37 +527,41 @@ class IngestionPanel(tk.Frame):
                                 "Workflow manager not available.")
             return
 
-        # If an Annotation panel exists, prefer to auto-save current annotations
-        ann_panel = wm.step_panels.get('annotation') if hasattr(wm, 'step_panels') else None
-        if ann_panel:
-            try:
-                # Collect and save annotations automatically if at least one annotated item exists
-                data, total, mode = ann_panel._collect_annotations_data()
-                if total > 0:
-                    # Save to default path in dataset folder
-                    base_dir = getattr(S, 'pathDirectory', None) or self.ctx.get('image_dir') or os.getcwd()
-                    # if base_dir points to gan_output_data already we use that
-                    if os.path.basename(base_dir) == 'gan_output_data':
+        # Check if we already have annotations from ingestion
+        ctx_annotations = self.ctx.get("annotations", [])
+        has_ctx_annotations = (isinstance(ctx_annotations, list)
+                               and ctx_annotations
+                               and isinstance(ctx_annotations[0], dict))
+
+        if not has_ctx_annotations:
+            # If no annotations loaded from ingestion, try the annotation panel
+            ann_panel = wm.step_panels.get('annotation') if hasattr(wm, 'step_panels') else None
+            if ann_panel:
+                try:
+                    data, total, mode = ann_panel._collect_annotations_data()
+                    if total > 0:
+                        base_dir = getattr(S, 'pathDirectory', None) or self.ctx.get('image_dir') or os.getcwd()
                         target_dir = base_dir
+                        os.makedirs(target_dir, exist_ok=True)
+                        save_path = os.path.join(target_dir, 'annotations_auto.json')
+                        saved = ann_panel.save_annotations_to_path(save_path, mode=mode, show_message=False)
+                        if saved:
+                            self.ctx['annotation_file'] = save_path
+                            self.ctx['annotations'] = data
+                            self.ctx['metadata']['has_annotations'] = True
+                            self.ann_card_info.set(f"✅ annotations_auto.json ({total} entries)")
                     else:
-                        target_dir = base_dir
-                    os.makedirs(target_dir, exist_ok=True)
-                    save_path = os.path.join(target_dir, 'annotations_auto.json')
-                    saved = ann_panel.save_annotations_to_path(save_path, mode=mode, show_message=False)
-                    if saved:
-                        # Update ingestion context
-                        self.ctx['annotation_file'] = save_path
-                        self.ctx['annotations'] = data
-                        self.ctx['metadata']['has_annotations'] = True
-                        self.ann_card_info.set(f"✅ annotations_auto.json ({total} entries)")
-                else:
-                    # No annotations in panel — warn user
-                    messagebox.showwarning("No Annotations",
-                                           "At least one image must be annotated before statistical analysis.")
-                    return
-            except Exception:
-                # If any error occurs, fall back to existing ctx annotations check
-                pass
+                        messagebox.showwarning("No Annotations",
+                                               "At least one image must be annotated before statistical analysis.")
+                        return
+                except Exception:
+                    pass
+
+            # Still no annotations?
+            if not self.ctx.get("annotations") and not self.ctx.get("annotation_file"):
+                messagebox.showwarning("No Annotations",
+                                       "Please load an annotation file or annotate images first.")
+                return
 
         # Proceed to Analysis
         wm.step_states["ingestion"] = "completed"
@@ -1106,6 +1329,56 @@ class IngestionPanel(tk.Frame):
                 fill="red", font=("Segoe UI", 10))
         self.preview_img_info.set(f"Image {idx + 1} of {len(imgs)}")
 
+        # Update annotation text for the current image
+        self._update_annotation_preview()
+
+    def _get_annotations_for_image(self, image_path: str) -> List[str]:
+        """Return annotation texts matching the given image path."""
+        annotations = self.ctx.get("annotations", [])
+        if not annotations:
+            return []
+
+        img_basename = os.path.basename(image_path).lower()
+        img_no_ext = os.path.splitext(img_basename)[0]
+
+        texts = []
+        for ann in annotations:
+            ann_id = str(ann.get("image_id", ann.get("filename", ann.get("file", "")))).strip()
+            if not ann_id:
+                continue
+            ann_id_lower = ann_id.lower()
+            ann_id_no_ext = os.path.splitext(ann_id_lower)[0]
+            if ann_id_lower == img_basename or ann_id_no_ext == img_no_ext:
+                # Prefer 'label', fall back to 'text', then 'caption'
+                text = ann.get("label", ann.get("text", ann.get("caption", "")))
+                if text:
+                    texts.append(str(text))
+        return texts
+
+    def _update_annotation_preview(self):
+        """Populate the ASCII text area with annotation text for the current preview image."""
+        imgs = self.ctx.get("images", [])
+        if not imgs:
+            return
+        idx = max(0, min(self.preview_img_index, len(imgs) - 1))
+        path = imgs[idx]
+
+        texts = self._get_annotations_for_image(path)
+        if texts:
+            combined = "\n".join(texts)
+            self.preview_text_area.delete("1.0", tk.END)
+            self.preview_text_area.insert("1.0", combined)
+            # Update char/word count
+            c = combined
+            self.preview_char_count.set(
+                f"Characters: {len(c)} | Words: {len(c.split()) if c.strip() else 0}")
+            # Sync to state
+            S.input_text = combined
+            S.gan_input_text = combined
+            if hasattr(S, "input_text_area"):
+                S.input_text_area.delete("1.0", tk.END)
+                S.input_text_area.insert("1.0", combined)
+
     def _preview_prev_img(self):
         imgs = self.ctx.get("images", [])
         if imgs and self.preview_img_index > 0:
@@ -1430,40 +1703,47 @@ class IngestionPanel(tk.Frame):
     # ------------------------------------------------------------------
 
     def _load_dataset(self):
-        """Unified dataset loader — pick a folder, auto-detect annotations."""
+        """Dataset loader — show folder-structure dialog, pick a folder, load."""
+        dlg = DatasetFolderDialog(self, self.colors)
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+
+        folder_struct = dlg.result["folder_structure"]  # flat|subfolders
+
         folder = filedialog.askdirectory(title="Select dataset folder")
         if not folder:
             return
 
-        # Scan images in root folder + common sub-folders
-        images = self._scan_images(folder)
-        for sub in ("batch", "out_data", "images", "img", "data"):
-            sub_path = os.path.join(folder, sub)
-            if os.path.isdir(sub_path):
-                images.extend(self._scan_images(sub_path))
+        # --- Scan images ---
+        if folder_struct == "subfolders":
+            images = self._scan_images_recursive(folder)
+        else:
+            images = self._scan_images(folder)
+            for sub in ("batch", "out_data", "images", "img", "data"):
+                sub_path = os.path.join(folder, sub)
+                if os.path.isdir(sub_path):
+                    images.extend(self._scan_images(sub_path))
 
         if not images:
             messagebox.showwarning(
                 "No Images",
-                "No image files found in the selected folder (or subfolders).")
+                "No image files found in the selected folder"
+                + (" (recursive scan)." if folder_struct == "subfolders" else " (or common subfolders)."))
             return
 
         # --- Auto-detect annotation file ---
         ann_file = self._find_annotation_file(folder)
-        # Also check parent folder (e.g. gan_output_data/annotation.txt)
         if ann_file is None:
-            parent = os.path.dirname(folder)
-            candidate = os.path.join(parent, "annotation.txt")
+            parent_dir = os.path.dirname(folder)
+            candidate = os.path.join(parent_dir, "annotation.txt")
             if os.path.isfile(candidate):
                 ann_file = candidate
 
         has_ann = ann_file is not None
 
         # Determine dataset type label
-        if has_ann:
-            ds_type = "annotated"
-        else:
-            ds_type = "raw"
+        ds_type = "annotated" if has_ann else "raw"
 
         # Populate context
         self.ctx["type"] = ds_type
@@ -1471,10 +1751,12 @@ class IngestionPanel(tk.Frame):
         self.ctx["images"] = images
         self.ctx["annotations"] = []
         self.ctx["annotation_file"] = ann_file
+        self.ctx["folder_structure"] = folder_struct
         self.ctx["metadata"]["has_annotations"] = has_ann
 
         if has_ann:
-            self._parse_annotation_file(ann_file)
+            self._parse_annotation_file(ann_file, fmt="auto",
+                                        image_dir=folder, images=images)
 
         # Legacy state sync
         S.pathDirectory = folder
@@ -1521,6 +1803,38 @@ class IngestionPanel(tk.Frame):
         files.sort()
         return files
 
+    @staticmethod
+    def _scan_images_recursive(folder: str) -> List[str]:
+        """Recursively scan *folder* and all sub-folders for image files.
+
+        This supports IAM-style directory layouts where images are nested
+        in multiple levels of sub-folders (e.g. ``forms/a01/a01-000u.png``).
+        """
+        IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+        files: List[str] = []
+        for root, _dirs, filenames in os.walk(folder):
+            for fn in filenames:
+                if os.path.splitext(fn)[1].lower() in IMG_EXTS:
+                    files.append(os.path.join(root, fn))
+        files.sort()
+        return files
+
+    @staticmethod
+    def _ask_annotation_file(title: str, filetypes) -> str | None:
+        """Open a file dialog for the user to pick an annotation file."""
+        path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        return path if path else None
+
+    @staticmethod
+    def _find_annotation_file_by_ext(folder: str, exts: List[str]) -> str | None:
+        """Find the first annotation file in *folder* whose extension is in *exts*."""
+        for name in os.listdir(folder):
+            if os.path.splitext(name)[1].lower() in exts:
+                full = os.path.join(folder, name)
+                if os.path.isfile(full):
+                    return full
+        return None
+
     def _find_annotation_file(self, folder: str):
         """Detect annotation file in a folder."""
         for name in ["annotation.txt", "annotations.json", "annotations.txt",
@@ -1535,60 +1849,225 @@ class IngestionPanel(tk.Frame):
                 return matches[0]
         return None
 
-    def _parse_annotation_file(self, path: str):
-        """Parse annotation file and populate context."""
-        annotations = []
-        writers = set()
-        ext = os.path.splitext(path)[1].lower()
+    def _parse_annotation_file(self, path: str, *,
+                                fmt: str = "auto",
+                                image_dir: str = "",
+                                images: List[str] | None = None):
+        """Parse annotation file and populate context.
+
+        Parameters
+        ----------
+        path : str | None
+            Path to the main annotation file.  May be *None* for per-image
+            formats (YOLO, VOC) where annotations live beside the images.
+        fmt : str
+            Annotation format hint — ``"iam"``, ``"coco"``, ``"yolo"``,
+            ``"voc"``, or ``"auto"`` (detect from extension / content).
+        image_dir : str
+            Root image directory (used by YOLO / VOC to locate per-image
+            annotation files).
+        images : list[str] | None
+            Full list of image paths (for YOLO / VOC per-image lookup).
+        """
+        annotations: List[Dict[str, Any]] = []
+        writers: set = set()
+
         try:
-            if ext == ".json":
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict) and "annotations" in data:
-                    # COCO format
-                    cat_map = {c["id"]: c.get("name", "?") for c in data.get("categories", [])}
-                    for ann in data["annotations"]:
-                        annotations.append({
-                            "image_id": ann.get("image_id"),
-                            "label": cat_map.get(ann.get("category_id"), ""),
-                            "bbox": ann.get("bbox"),
-                        })
-                elif isinstance(data, list):
-                    annotations = data
-            elif ext in (".txt", ""):
-                with open(path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        parts = line.split()
-                        if len(parts) >= 8:
-                            text = " ".join(parts[8:]) if len(parts) > 8 else parts[7]
-                            annotations.append({
-                                "image_id": parts[0],
-                                "status": parts[1],
-                                "writer": parts[2],
-                                "bbox": parts[3:7],
-                                "label": text,
-                            })
-                            writers.add(parts[2])
-            elif ext == ".csv":
-                import csv
-                with open(path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        annotations.append(dict(row))
-            elif ext == ".jsonl":
-                with open(path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            annotations.append(json.loads(line))
+            # ---- YOLO (per-image .txt) ----
+            if fmt == "yolo":
+                annotations, writers = self._parse_yolo_annotations(
+                    image_dir, images or [])
+
+            # ---- Pascal VOC (per-image .xml) ----
+            elif fmt == "voc":
+                annotations, writers = self._parse_voc_annotations(
+                    image_dir, images or [])
+
+            # ---- COCO JSON ----
+            elif fmt == "coco" and path:
+                annotations, writers = self._parse_coco_annotation_file(path)
+
+            # ---- IAM .txt ----
+            elif fmt == "iam" and path:
+                annotations, writers = self._parse_iam_annotation_file(path)
+
+            # ---- Auto-detect ----
+            elif path:
+                ext = os.path.splitext(path)[1].lower()
+                if ext == ".json":
+                    annotations, writers = self._parse_coco_annotation_file(path)
+                elif ext in (".txt", ""):
+                    annotations, writers = self._parse_iam_annotation_file(path)
+                elif ext == ".csv":
+                    import csv
+                    with open(path, "r", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            annotations.append(dict(row))
+                elif ext == ".jsonl":
+                    with open(path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if line.strip():
+                                annotations.append(json.loads(line))
         except Exception as e:
-            messagebox.showerror("Parse Error", f"Failed to parse annotation file:\n{e}")
+            messagebox.showerror("Parse Error",
+                                 f"Failed to parse annotation file:\n{e}")
 
         self.ctx["annotations"] = annotations
         self.ctx["metadata"]["writers"] = list(writers)
         self.ctx["metadata"]["annotation_count"] = len(annotations)
+
+    # ---- format-specific parsers ----
+
+    @staticmethod
+    def _parse_iam_annotation_file(path: str):
+        """Parse an IAM-format .txt annotation file."""
+        annotations: list = []
+        writers: set = set()
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 8:
+                    text = " ".join(parts[8:]) if len(parts) > 8 else parts[7]
+                    annotations.append({
+                        "image_id": parts[0],
+                        "status": parts[1],
+                        "writer": parts[2],
+                        "bbox": parts[3:7],
+                        "label": text,
+                    })
+                    writers.add(parts[2])
+        return annotations, writers
+
+    @staticmethod
+    def _parse_coco_annotation_file(path: str):
+        """Parse a COCO-JSON annotation file."""
+        annotations: list = []
+        writers: set = set()
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "annotations" in data:
+            cat_map = {c["id"]: c.get("name", "?")
+                       for c in data.get("categories", [])}
+            img_map = {im["id"]: im.get("file_name", "")
+                       for im in data.get("images", [])}
+            for ann in data["annotations"]:
+                img_id = ann.get("image_id")
+                annotations.append({
+                    "image_id": img_map.get(img_id, img_id),
+                    "label": cat_map.get(ann.get("category_id"), ""),
+                    "bbox": ann.get("bbox"),
+                    "text": ann.get("attributes", {}).get("text", ""),
+                })
+        elif isinstance(data, list):
+            annotations = data
+        return annotations, writers
+
+    @staticmethod
+    def _parse_yolo_annotations(image_dir: str, images: List[str]):
+        """Parse YOLO per-image .txt annotation files.
+
+        Each image ``img.jpg`` has a corresponding ``img.txt`` with lines:
+        ``class_id x_center y_center width height`` (normalised 0-1).
+        A ``classes.txt`` in the same directory maps class IDs to labels.
+        """
+        annotations: list = []
+        writers: set = set()
+
+        # Try to load class names
+        classes_path = os.path.join(image_dir, "classes.txt")
+        class_names: Dict[int, str] = {}
+        if os.path.isfile(classes_path):
+            with open(classes_path, "r", encoding="utf-8") as f:
+                for idx, line in enumerate(f):
+                    class_names[idx] = line.strip()
+
+        for img_path in images:
+            base = os.path.splitext(img_path)[0]
+            txt_path = base + ".txt"
+            if not os.path.isfile(txt_path):
+                continue
+            # Read image size for de-normalisation
+            try:
+                with Image.open(img_path) as im:
+                    iw, ih = im.size
+            except Exception:
+                iw, ih = 0, 0
+            with open(txt_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 5:
+                        continue
+                    cls_id = int(parts[0])
+                    xc, yc, w, h = (float(parts[1]), float(parts[2]),
+                                    float(parts[3]), float(parts[4]))
+                    # Convert normalised coords to pixel values
+                    abs_w = w * iw
+                    abs_h = h * ih
+                    abs_x = xc * iw - abs_w / 2
+                    abs_y = yc * ih - abs_h / 2
+                    annotations.append({
+                        "image_id": os.path.basename(img_path),
+                        "label": class_names.get(cls_id, str(cls_id)),
+                        "bbox": [abs_x, abs_y, abs_w, abs_h],
+                    })
+        return annotations, writers
+
+    @staticmethod
+    def _parse_voc_annotations(image_dir: str, images: List[str]):
+        """Parse Pascal VOC per-image .xml annotation files."""
+        import xml.etree.ElementTree as ET
+
+        annotations: list = []
+        writers: set = set()
+
+        for img_path in images:
+            base = os.path.splitext(img_path)[0]
+            xml_path = base + ".xml"
+            if not os.path.isfile(xml_path):
+                # Also try an Annotations/ sibling folder (common VOC layout)
+                parent = os.path.dirname(img_path)
+                ann_dir = os.path.join(os.path.dirname(parent), "Annotations")
+                candidate = os.path.join(
+                    ann_dir, os.path.splitext(os.path.basename(img_path))[0] + ".xml")
+                if os.path.isfile(candidate):
+                    xml_path = candidate
+                else:
+                    continue
+            try:
+                tree = ET.parse(xml_path)
+            except Exception:
+                continue
+            root = tree.getroot()
+            filename = img_path
+            fn_el = root.find("filename")
+            if fn_el is not None and fn_el.text:
+                filename = fn_el.text
+            for obj in root.findall("object"):
+                name_el = obj.find("name")
+                label = name_el.text if name_el is not None else "unknown"
+                bb = obj.find("bndbox")
+                if bb is None:
+                    continue
+                try:
+                    xmin = float(bb.findtext("xmin", "0"))
+                    ymin = float(bb.findtext("ymin", "0"))
+                    xmax = float(bb.findtext("xmax", "0"))
+                    ymax = float(bb.findtext("ymax", "0"))
+                except ValueError:
+                    continue
+                annotations.append({
+                    "image_id": os.path.basename(filename),
+                    "label": label,
+                    "bbox": [xmin, ymin, xmax - xmin, ymax - ymin],
+                })
+        return annotations, writers
 
     def _extract_metadata(self, images: List[str]):
         """Extract resolution, file size, etc. from images (run in thread)."""

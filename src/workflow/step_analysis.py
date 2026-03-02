@@ -55,10 +55,24 @@ class AnalysisPanel(tk.Frame):
                  bg=self.colors["bg_section"], fg=self.colors["text_muted"]).pack(side=tk.LEFT, padx=15)
 
         # Re-analyze button
-        tk.Button(hdr, text="🔄 Re-Analyze", command=self._run_analysis,
+        self.btn_reanalyze = tk.Button(hdr, text="🔄 Re-Analyze", command=self._run_analysis,
                   bg=self.colors["accent"], fg="white",
                   font=("Segoe UI", 9, "bold"), relief=tk.FLAT,
-                  padx=10, pady=4, cursor="hand2").pack(side=tk.RIGHT)
+                  padx=10, pady=4, cursor="hand2")
+        self.btn_reanalyze.pack(side=tk.RIGHT)
+
+        # Progress bar
+        progress_frame = tk.Frame(self, bg=self.colors["bg_dark"])
+        progress_frame.pack(fill=tk.X, padx=15, pady=(0, 2))
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var,
+                                             maximum=100, mode="determinate", length=400)
+        self.progress_bar.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        self.progress_label = tk.Label(progress_frame, text="",
+                                        font=("Segoe UI", 8),
+                                        bg=self.colors["bg_dark"],
+                                        fg=self.colors["text_muted"])
+        self.progress_label.pack(side=tk.LEFT, padx=(8, 0))
 
         # Notebook (tabs)
         self.notebook = ttk.Notebook(self)
@@ -100,356 +114,470 @@ class AnalysisPanel(tk.Frame):
         if self.ctx.get("image_dir") or self.ctx.get("images"):
             self._run_analysis()
 
+    def _set_progress(self, value: float, text: str = ""):
+        """Update progress bar from any thread (schedules on main thread)."""
+        def _update():
+            self.progress_var.set(value)
+            self.progress_label.config(text=text)
+            self.update_idletasks()
+        self.after(0, _update)
+
     def _run_analysis(self):
         self.status_var.set("⏳ Analyzing dataset…")
+        self.btn_reanalyze.config(state="disabled")
+        self._set_progress(0, "Starting…")
 
         def worker():
-            stats = {}
-            folder = self.ctx.get("image_dir", "")
-            ann_file = self.ctx.get("annotation_file")
-            # treat existence of an annotation file as having annotations
-            has_ann = self.ctx["metadata"].get("has_annotations", False) or bool(ann_file and os.path.isfile(ann_file))
+            try:
+                self._run_analysis_worker()
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda: self.status_var.set(f"❌ Error: {exc}"))
+            finally:
+                self.after(0, lambda: self.btn_reanalyze.config(state="normal"))
 
-            # Ensure crops are available per-image for any annotated folder.
-            # Use the annotation file's directory as the base if it differs from the
-            # image_dir (e.g. when auto-saving annotations).
-            if ann_file and os.path.isfile(ann_file) and self.ctx.get("type") != "synthetic":
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Direct analysis from context annotations (fast path)
+    # ------------------------------------------------------------------
+
+    def _analyze_from_context(self, annotations, images):
+        """Compute stats directly from ctx['annotations'] list-of-dicts.
+
+        This avoids re-reading files from disk and is used when the user
+        loaded data via the ingestion stage.
+        """
+        self.analyzer.reset_stats()
+        total = len(annotations)
+
+        for i, ann in enumerate(annotations):
+            if i % 50 == 0:
+                pct = 30 + int(50 * i / max(total, 1))
+                self._set_progress(pct, f"Processing annotation {i+1}/{total}")
+
+            self.analyzer.total_annotations += 1
+
+            # Extract text — different keys depending on format
+            text = (ann.get("label") or ann.get("text")
+                    or ann.get("caption") or ann.get("transcription") or "")
+            if text:
+                self.analyzer._process_text(str(text))
+
+            # Writer / style
+            writer = ann.get("writer", ann.get("writer_id", ""))
+            if writer:
+                self.analyzer.handwriting_styles.add(str(writer))
+
+            # Image ID
+            img_id = ann.get("image_id", ann.get("filename", ann.get("file", "")))
+            if img_id:
+                self.analyzer.images.append(str(img_id))
+
+        # Determine annotation type
+        if self.analyzer.sequence_lengths:
+            avg_len = (sum(self.analyzer.sequence_lengths)
+                       / len(self.analyzer.sequence_lengths))
+            if avg_len < 3:
+                self.analyzer.annotation_type = "character"
+            elif avg_len < 15:
+                self.analyzer.annotation_type = "word"
+            else:
+                self.analyzer.annotation_type = "line"
+
+        self._set_progress(85, "Computing statistics…")
+
+        stats = {
+            "folder": self.ctx.get("image_dir", ""),
+            "annotation_type": self.analyzer.annotation_type,
+            "total_annotations": self.analyzer.total_annotations,
+            "total_images": len(set(self.analyzer.images)),
+            "character_stats": self.analyzer._compute_character_stats(),
+            "word_stats": self.analyzer._compute_word_stats(),
+            "sequence_stats": self.analyzer._compute_sequence_stats(),
+            "ngram_stats": self.analyzer._compute_ngram_stats(),
+            "style_stats": self.analyzer._compute_style_stats(),
+            "crop_count": 0,
+        }
+        return stats
+
+    # ------------------------------------------------------------------
+    # Main analysis worker (runs in background thread)
+    # ------------------------------------------------------------------
+
+    def _run_analysis_worker(self):
+        stats = {}
+        folder = self.ctx.get("image_dir", "")
+        ann_file = self.ctx.get("annotation_file")
+        has_ann = (self.ctx.get("metadata", {}).get("has_annotations", False)
+                   or bool(ann_file and os.path.isfile(str(ann_file))))
+
+        # ── Fast path: annotations already parsed in context ──
+        ctx_annotations = self.ctx.get("annotations")
+        is_list_of_dicts = (isinstance(ctx_annotations, list)
+                            and ctx_annotations
+                            and isinstance(ctx_annotations[0], dict))
+
+        if is_list_of_dicts and self.ctx.get("type") != "synthetic":
+            self._set_progress(20, "Analyzing loaded annotations…")
+            stats = self._analyze_from_context(
+                ctx_annotations, self.ctx.get("images", []))
+            has_ann = True
+
+        # ── Synthetic / GAN generation path ──
+        elif self.ctx.get("type") == "synthetic":
+            self._set_progress(5, "Preparing GAN output…")
+            stats = self._run_synthetic_analysis()
+            has_ann = stats.get("has_annotations", False)
+            folder = stats.pop("_folder", folder)
+            ann_file = stats.pop("_ann_file", ann_file)
+
+        # ── Fallback: scan folder with CorpusAnalyzer ──
+        elif has_ann and ann_file and os.path.isfile(str(ann_file)):
+            self._set_progress(20, "Reading annotation file…")
+            try:
                 ann_dir = os.path.dirname(ann_file)
-                self._export_crops_from_annotation(ann_dir, ann_file,
-                                                    self.ctx.get("annotation_type", "word"))
-                # use ann_dir for later stats and metadata calculations
-                folder = ann_dir
-            # Special handling for synthetic/GAN outputs: export generated
-            # images and build per-image crops + annotation file so analyzer
-            # can treat them as a proper annotated dataset.
-            if self.ctx.get("type") == "synthetic":
-                try:
-                    import shutil, uuid, datetime as _dt, tempfile
-                    import state as S
-                    gen_files = getattr(S, 'gan_generated_files', None)
-                    if gen_files:
-                        # ── Determine gan_output_data base ──
-                        # Always resolve from the source tree to avoid
-                        # nested gan_output_data folders when S.pathDirectory
-                        # has been redirected to a previous session.
-                        src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-                        gan_root = os.path.join(src_root, 'gan_output_data')
-                        os.makedirs(gan_root, exist_ok=True)
+                stats = self.analyzer.analyze_folder(ann_dir)
+            except Exception as e:
+                stats = {"error": str(e)}
+        elif folder:
+            self._set_progress(20, "Scanning folder…")
+            try:
+                stats = self.analyzer.analyze_folder(folder)
+            except Exception as e:
+                stats = {"error": str(e)}
 
-                        # ── Clean up stale out / tmp folders ──
-                        for stale in ('out', 'tmp'):
-                            stale_path = os.path.join(gan_root, stale)
-                            if os.path.isdir(stale_path):
-                                try:
-                                    shutil.rmtree(stale_path)
-                                except Exception:
-                                    pass
+        self._set_progress(90, "Finalising…")
 
-                        # ── Annotation label & timestamped folder ──
-                        ann_type = getattr(S, 'annotation_type', None) or self.ctx.get("annotation_type", "word")
-                        label = ann_type if ann_type in ("line", "word") else "word"
-                        stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                        session_dir = os.path.join(gan_root, f"{label}_{stamp}")
-                        images_dir = os.path.join(session_dir, "images")
-                        os.makedirs(images_dir, exist_ok=True)
+        # Override annotation type if context specifies it
+        if self.ctx.get("annotation_type"):
+            stats["annotation_type"] = self.ctx.get("annotation_type")
+        if self.ctx.get("annotation_source"):
+            stats["annotation_source"] = self.ctx.get("annotation_source")
 
-                        # ── Copy main generated images into session_dir ──
-                        copied = []  # (main_filename, texts)
-                        for sv, jp, texts in gen_files:
-                            src = jp if (jp and os.path.isfile(jp)) else sv
-                            if not src or not os.path.exists(src):
-                                continue
-                            name = os.path.basename(src)
-                            dst_name = f"{os.path.splitext(name)[0]}_{uuid.uuid4().hex[:6]}{os.path.splitext(name)[1]}"
-                            dst = os.path.join(session_dir, dst_name)
-                            try:
-                                shutil.copyfile(src, dst)
-                            except Exception:
-                                with open(src, 'rb') as fr, open(dst, 'wb') as fw:
-                                    fw.write(fr.read())
-                            copied.append((dst_name, texts))
-
-                        main_image_list = [os.path.join(session_dir, n) for n, _ in copied]
-
-                        # ── Run detector to produce crops ──
-                        try:
-                            from actions import save_file as save_file_action
-                        except Exception:
-                            save_file_action = None
-
-                        try:
-                            from actions.line_annotate import detect_text_lines
-                        except Exception:
-                            detect_text_lines = None
-
-                        # (crop_filename, src_image, x, y, w, h, transcription)
-                        crop_entries = []
-
-                        # Build lookup of user-typed annotation texts from the
-                        # annotation stage (ctx['annotations']).  These come from
-                        # the input fields below each crop image.
-                        user_annotations = {}  # index -> text
-                        ann_data = self.ctx.get('annotations') or {}
-                        ann_mode = ann_data.get('mode', 'word')
-                        if ann_mode == 'word':
-                            for wi, w_entry in enumerate(ann_data.get('words', [])):
-                                txt = (w_entry.get('text') or '').strip()
-                                if txt:
-                                    user_annotations[wi] = txt
-                        elif ann_mode == 'line':
-                            for li, l_entry in enumerate(ann_data.get('lines', [])):
-                                txt = (l_entry.get('text') or '').strip()
-                                if txt:
-                                    user_annotations[li] = txt
-
-                        # Pre-build GAN text lists per source image.
-                        # For "line" mode: keep each line as-is.
-                        # For "word" mode: split lines into individual words.
-                        gan_texts_per_image = {}  # idx -> [str, ...]
-                        for ci, (_, c_texts) in enumerate(copied):
-                            if label == "line":
-                                # One text entry per line
-                                gan_texts_per_image[ci] = [
-                                    ln.strip() for ln in (c_texts or []) if ln.strip()
-                                ]
-                            else:
-                                # Split into individual words
-                                words = []
-                                for ln in (c_texts or []):
-                                    words.extend(ln.strip().split())
-                                gan_texts_per_image[ci] = words
-
-                        global_crop_idx = 0  # running counter across all source images
-
-                        # ============================================================
-                        # LINE-level detection & cropping
-                        # ============================================================
-                        if label == "line" and detect_text_lines is not None:
-                            import cv2, numpy as np
-
-                            for idx, src_img in enumerate(main_image_list):
-                                try:
-                                    pil_img = Image.open(src_img).convert('RGB')
-                                    img_w, img_h = pil_img.size
-                                    img_array = np.array(pil_img)
-                                    img_gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-                                    lines_detected = detect_text_lines(img_gray)
-                                except Exception as _le:
-                                    print(f"[step_analysis] Line detection failed "
-                                          f"for {src_img}: {_le}")
-                                    continue
-
-                                img_base = os.path.splitext(
-                                    os.path.basename(src_img))[0]
-                                img_lines = gan_texts_per_image.get(idx, [])
-
-                                # Add padding around each line
-                                pad = 5
-                                for i, (x1, y1, x2, y2) in enumerate(lines_detected):
-                                    # Use tight content boundaries from original image
-                                    x1_pad = max(0, int(x1) - pad)
-                                    y1_pad = max(0, int(y1) - pad)
-                                    x2_pad = min(img_w, int(x2) + pad)
-                                    y2_pad = min(img_h, int(y2) + pad)
-                                    bw = x2_pad - x1_pad
-                                    bh = y2_pad - y1_pad
-                                    if bh <= 0 or bw <= 0:
-                                        continue
-                                    # Crop using tight boundaries from original image
-                                    crop_array = img_array[y1_pad:y2_pad, x1_pad:x2_pad]
-                                    crop = Image.fromarray(crop_array)
-                                    crop_name = f"{img_base}_line{i}.png"
-                                    crop_dst = os.path.join(images_dir, crop_name)
-                                    try:
-                                        crop.save(crop_dst, 'PNG')
-                                    except Exception:
-                                        continue
-
-                                    gt = user_annotations.get(global_crop_idx, '')
-                                    if not gt and i < len(img_lines):
-                                        gt = img_lines[i]
-                                    global_crop_idx += 1
-                                    crop_entries.append((crop_name,
-                                                         os.path.basename(src_img),
-                                                         x1_pad, y1_pad, bw, bh, gt))
-
-                        # ============================================================
-                        # WORD-level detection & cropping (existing flow)
-                        # ============================================================
-                        elif save_file_action:
-                            # Use a temporary directory for detector scratch so
-                            # out / tmp never appear inside gan_output_data.
-                            tmp_root = tempfile.mkdtemp(prefix="gan_det_")
-                            old_path_dir = getattr(S, 'pathDirectory', None)
-                            S.pathDirectory = session_dir
-                            S.list_of_files = main_image_list
-                            S.directoryout = os.path.join(tmp_root, 'out')
-                            S.directorytmp = os.path.join(tmp_root, 'tmp')
-                            os.makedirs(S.directoryout, exist_ok=True)
-                            os.makedirs(S.directorytmp, exist_ok=True)
-
-                            # Force 'load' mode so save_file reads from
-                            # S.list_of_files instead of GAN batch state.
-                            old_input_mode = None
-                            if hasattr(S, 'input_mode_var'):
-                                old_input_mode = S.input_mode_var.get()
-                                S.input_mode_var.set('load')
-
-                            for idx, src_img in enumerate(main_image_list):
-                                try:
-                                    S.pos = idx
-                                    save_file_action.save_file()
-                                except Exception as _det_err:
-                                    print(f"[step_analysis] Detection failed for {src_img}: {_det_err}")
-                                    continue
-
-                                img_base = os.path.splitext(os.path.basename(src_img))[0]
-                                wp = getattr(S, 'word_image_paths', []) or []
-                                wbb = getattr(S, 'word_bboxes', []) or []
-                                img_words = gan_texts_per_image.get(idx, [])
-                                local_crop_i = 0  # per-image crop counter
-
-                                for i, crop_path in enumerate(wp):
-                                    if not os.path.exists(crop_path):
-                                        continue
-                                    crop_name = f"{img_base}_{i}.png"
-                                    crop_dst = os.path.join(images_dir, crop_name)
-                                    try:
-                                        shutil.move(crop_path, crop_dst)
-                                    except Exception:
-                                        try:
-                                            shutil.copyfile(crop_path, crop_dst)
-                                        except Exception:
-                                            continue
-                                    # Extract bbox (x, y, w, h) from detector
-                                    if i < len(wbb):
-                                        bb = wbb[i]
-                                        try:
-                                            bx, by, bw, bh = int(bb[0]), int(bb[1]), int(bb[2]), int(bb[3])
-                                        except Exception:
-                                            bx, by, bw, bh = 0, 0, 0, 0
-                                    else:
-                                        bx, by, bw, bh = 0, 0, 0, 0
-                                    # Prefer user-typed annotation; fall back to
-                                    # GAN word (split line-by-line, left-to-right).
-                                    gt = user_annotations.get(global_crop_idx, '')
-                                    if not gt and local_crop_i < len(img_words):
-                                        gt = img_words[local_crop_i]
-                                    local_crop_i += 1
-                                    global_crop_idx += 1
-                                    crop_entries.append((crop_name, os.path.basename(src_img),
-                                                         bx, by, bw, bh, gt))
-
-                            # Restore pathDirectory and input mode
-                            if old_path_dir is not None:
-                                S.pathDirectory = old_path_dir
-                            if old_input_mode is not None and hasattr(S, 'input_mode_var'):
-                                S.input_mode_var.set(old_input_mode)
-
-                            # Clean up temporary detector directories
-                            try:
-                                shutil.rmtree(tmp_root)
-                            except Exception:
-                                pass
-                        else:
-                            # Detector unavailable – copy main images as crops
-                            for c_idx, (c_name, c_texts) in enumerate(copied):
-                                src_p = os.path.join(session_dir, c_name)
-                                if not os.path.isfile(src_p):
-                                    continue
-                                try:
-                                    shutil.copy2(src_p, os.path.join(images_dir, c_name))
-                                except Exception:
-                                    continue
-                                # Prefer user annotation; fall back to full
-                                # GAN line text for whole-image crop.
-                                gt = user_annotations.get(global_crop_idx, '')
-                                if not gt:
-                                    gt = ' '.join([t.strip() for t in (c_texts or []) if t]) or ''
-                                global_crop_idx += 1
-                                # No bbox available without detector
-                                try:
-                                    im = Image.open(src_p)
-                                    iw, ih = im.size
-                                except Exception:
-                                    iw, ih = 0, 0
-                                crop_entries.append((c_name, c_name, 0, 0, iw, ih, gt))
-
-                        # ── Write annotations.txt in IAM format inside images/ ──
-                        # Format: crop_name ok 0 x y w h transcription
-                        ann_path = os.path.join(images_dir, 'annotations.txt')
-                        with open(ann_path, 'w', encoding='utf-8') as af:
-                            af.write(f'# {label}-level annotations (IAM format)\n')
-                            af.write('# crop_name ok writer_id x y w h transcription\n')
-                            for crop_name, src_img, bx, by, bw, bh, gt in crop_entries:
-                                af.write(f"{crop_name} ok 0 {bx} {by} {bw} {bh} {gt}\n")
-
-                        # ── Write metadata inside images/ ──
-                        try:
-                            import json as _json
-                            meta_path = os.path.join(images_dir, 'annotation_meta.json')
-                            with open(meta_path, 'w', encoding='utf-8') as mf:
-                                _json.dump({"annotation_type": label,
-                                            "total_crops": len(crop_entries),
-                                            "created": stamp}, mf)
-                        except Exception:
-                            pass
-
-                        # ── Point context to images/ for downstream analysis ──
-                        folder = images_dir
-                        ann_file = ann_path
-                        has_ann = True
-                        self.ctx['image_dir'] = images_dir
-                        self.ctx['annotation_file'] = ann_path
-                        self.ctx['images'] = [os.path.join(images_dir, e[0]) for e in crop_entries]
-                except Exception as _synth_err:
-                    import traceback
-                    traceback.print_exc()
-                    print(f"[step_analysis] Synthetic export error: {_synth_err}")
-
-            if has_ann and ann_file and os.path.isfile(ann_file):
-                # Use CorpusAnalyzer on the parent folder of the annotation file
-                try:
-                    ann_dir = os.path.dirname(ann_file)
-                    stats = self.analyzer.analyze_folder(ann_dir)
-                except Exception as e:
-                    stats = {"error": str(e)}
-            elif has_ann and folder:
-                try:
-                    stats = self.analyzer.analyze_folder(folder)
-                except Exception as e:
-                    stats = {"error": str(e)}
-            # Override annotation type if context specifies it (preprocessing choice)
-            if self.ctx.get("annotation_type"):
-                stats["annotation_type"] = self.ctx.get("annotation_type")
-            if self.ctx.get("annotation_source"):
-                stats["annotation_source"] = self.ctx.get("annotation_source")
-
-            # Supplement with image-only metadata
-            # image_count should reflect number of cropped images if available
-            # folder may have been redirected to ann_dir above
+        # Supplement with image metadata
+        if folder:
             crops_dir = os.path.join(folder, 'crops')
             if os.path.isdir(crops_dir):
-                # count subdirectories (each source image) or files
-                subdirs = [d for d in os.listdir(crops_dir) if os.path.isdir(os.path.join(crops_dir, d))]
+                subdirs = [d for d in os.listdir(crops_dir)
+                           if os.path.isdir(os.path.join(crops_dir, d))]
                 if subdirs:
                     stats["image_count"] = len(subdirs)
                 else:
-                    stats["image_count"] = len([f for f in os.listdir(crops_dir) if os.path.isfile(os.path.join(crops_dir, f))])
+                    stats["image_count"] = len([
+                        f for f in os.listdir(crops_dir)
+                        if os.path.isfile(os.path.join(crops_dir, f))])
             else:
-                stats["image_count"] = len(self.ctx.get("images", []))
-            stats["dataset_type"] = self.ctx.get("type", "unknown")
-            stats["has_annotations"] = has_ann
-            meta = self.ctx.get("metadata", {})
-            stats["avg_width"] = meta.get("avg_width", 0)
-            stats["avg_height"] = meta.get("avg_height", 0)
-            stats["total_size_mb"] = meta.get("total_size_bytes", 0) / (1024 * 1024)
+                stats.setdefault("image_count", len(self.ctx.get("images", [])))
+        else:
+            stats.setdefault("image_count", len(self.ctx.get("images", [])))
 
-            self.stats = stats
-            self.ctx["stats"] = stats
-            self.after(0, lambda: self._populate_tabs(stats))
+        stats["dataset_type"] = self.ctx.get("type", "unknown")
+        stats["has_annotations"] = has_ann
+        meta = self.ctx.get("metadata", {})
+        stats["avg_width"] = meta.get("avg_width", 0)
+        stats["avg_height"] = meta.get("avg_height", 0)
+        stats["total_size_mb"] = meta.get("total_size_bytes", 0) / (1024 * 1024)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self.stats = stats
+        self.ctx["stats"] = stats
+
+        self._set_progress(100, "Done")
+        self.after(0, lambda: self._populate_tabs(stats))
+
+    # ------------------------------------------------------------------
+    # Synthetic / GAN analysis (heavy path, kept separate)
+    # ------------------------------------------------------------------
+
+    def _run_synthetic_analysis(self):
+        """Handle GAN-generated synthetic data: export crops + annotations."""
+        stats = {}
+        folder = self.ctx.get("image_dir", "")
+        ann_file = self.ctx.get("annotation_file")
+
+        try:
+            import shutil, uuid, datetime as _dt, tempfile
+            import state as S
+            gen_files = getattr(S, 'gan_generated_files', None)
+            if not gen_files:
+                # No GAN files — fall back to folder scan
+                self._set_progress(30, "No GAN files; scanning folder…")
+                if folder:
+                    stats = self.analyzer.analyze_folder(folder)
+                stats["has_annotations"] = False
+                stats["_folder"] = folder
+                stats["_ann_file"] = ann_file
+                return stats
+
+            src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            gan_root = os.path.join(src_root, 'gan_output_data')
+            os.makedirs(gan_root, exist_ok=True)
+
+            for stale in ('out', 'tmp'):
+                stale_path = os.path.join(gan_root, stale)
+                if os.path.isdir(stale_path):
+                    try:
+                        shutil.rmtree(stale_path)
+                    except Exception:
+                        pass
+
+            ann_type = (getattr(S, 'annotation_type', None)
+                        or self.ctx.get("annotation_type", "word"))
+            label = ann_type if ann_type in ("line", "word") else "word"
+            stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            session_dir = os.path.join(gan_root, f"{label}_{stamp}")
+            images_dir = os.path.join(session_dir, "images")
+            os.makedirs(images_dir, exist_ok=True)
+
+            self._set_progress(10, "Copying generated images…")
+
+            copied = []
+            for sv, jp, texts in gen_files:
+                src = jp if (jp and os.path.isfile(jp)) else sv
+                if not src or not os.path.exists(src):
+                    continue
+                name = os.path.basename(src)
+                dst_name = (f"{os.path.splitext(name)[0]}"
+                            f"_{uuid.uuid4().hex[:6]}"
+                            f"{os.path.splitext(name)[1]}")
+                dst = os.path.join(session_dir, dst_name)
+                try:
+                    shutil.copyfile(src, dst)
+                except Exception:
+                    with open(src, 'rb') as fr, open(dst, 'wb') as fw:
+                        fw.write(fr.read())
+                copied.append((dst_name, texts))
+
+            main_image_list = [os.path.join(session_dir, n) for n, _ in copied]
+
+            try:
+                from actions import save_file as save_file_action
+            except Exception:
+                save_file_action = None
+            try:
+                from actions.line_annotate import detect_text_lines
+            except Exception:
+                detect_text_lines = None
+
+            crop_entries = []
+
+            # Build user-annotation lookup
+            user_annotations = {}
+            ann_data = self.ctx.get('annotations') or {}
+            ann_mode = ann_data.get('mode', 'word') if isinstance(ann_data, dict) else 'word'
+            if isinstance(ann_data, dict):
+                if ann_mode == 'word':
+                    for wi, w_entry in enumerate(ann_data.get('words', [])):
+                        txt = (w_entry.get('text') or '').strip()
+                        if txt:
+                            user_annotations[wi] = txt
+                elif ann_mode == 'line':
+                    for li, l_entry in enumerate(ann_data.get('lines', [])):
+                        txt = (l_entry.get('text') or '').strip()
+                        if txt:
+                            user_annotations[li] = txt
+
+            # Build GAN text lists per source image
+            gan_texts_per_image = {}
+            for ci, (_, c_texts) in enumerate(copied):
+                if label == "line":
+                    gan_texts_per_image[ci] = [
+                        ln.strip() for ln in (c_texts or []) if ln.strip()]
+                else:
+                    words = []
+                    for ln in (c_texts or []):
+                        words.extend(ln.strip().split())
+                    gan_texts_per_image[ci] = words
+
+            global_crop_idx = 0
+            total_images = len(main_image_list)
+
+            # === LINE detection ===
+            if label == "line" and detect_text_lines is not None:
+                import cv2, numpy as np
+
+                for idx, src_img in enumerate(main_image_list):
+                    self._set_progress(
+                        15 + int(55 * idx / max(total_images, 1)),
+                        f"Line detection {idx+1}/{total_images}")
+                    try:
+                        pil_img = Image.open(src_img).convert('RGB')
+                        img_w, img_h = pil_img.size
+                        img_array = np.array(pil_img)
+                        img_gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                        lines_detected = detect_text_lines(img_gray)
+                    except Exception as _le:
+                        print(f"[step_analysis] Line detection failed "
+                              f"for {src_img}: {_le}")
+                        continue
+
+                    img_base = os.path.splitext(os.path.basename(src_img))[0]
+                    img_lines = gan_texts_per_image.get(idx, [])
+                    pad = 5
+                    for i, (x1, y1, x2, y2) in enumerate(lines_detected):
+                        x1_pad = max(0, int(x1) - pad)
+                        y1_pad = max(0, int(y1) - pad)
+                        x2_pad = min(img_w, int(x2) + pad)
+                        y2_pad = min(img_h, int(y2) + pad)
+                        bw = x2_pad - x1_pad
+                        bh = y2_pad - y1_pad
+                        if bh <= 0 or bw <= 0:
+                            continue
+                        crop_array = img_array[y1_pad:y2_pad, x1_pad:x2_pad]
+                        crop = Image.fromarray(crop_array)
+                        crop_name = f"{img_base}_line{i}.png"
+                        crop_dst = os.path.join(images_dir, crop_name)
+                        try:
+                            crop.save(crop_dst, 'PNG')
+                        except Exception:
+                            continue
+                        gt = user_annotations.get(global_crop_idx, '')
+                        if not gt and i < len(img_lines):
+                            gt = img_lines[i]
+                        global_crop_idx += 1
+                        crop_entries.append((crop_name,
+                                             os.path.basename(src_img),
+                                             x1_pad, y1_pad, bw, bh, gt))
+
+            # === WORD detection ===
+            elif save_file_action:
+                tmp_root = tempfile.mkdtemp(prefix="gan_det_")
+                old_path_dir = getattr(S, 'pathDirectory', None)
+                S.pathDirectory = session_dir
+                S.list_of_files = main_image_list
+                S.directoryout = os.path.join(tmp_root, 'out')
+                S.directorytmp = os.path.join(tmp_root, 'tmp')
+                os.makedirs(S.directoryout, exist_ok=True)
+                os.makedirs(S.directorytmp, exist_ok=True)
+
+                old_input_mode = None
+                if hasattr(S, 'input_mode_var'):
+                    old_input_mode = S.input_mode_var.get()
+                    S.input_mode_var.set('load')
+
+                for idx, src_img in enumerate(main_image_list):
+                    self._set_progress(
+                        15 + int(55 * idx / max(total_images, 1)),
+                        f"Word detection {idx+1}/{total_images}")
+                    try:
+                        S.pos = idx
+                        save_file_action.save_file()
+                    except Exception as _det_err:
+                        print(f"[step_analysis] Detection failed for "
+                              f"{src_img}: {_det_err}")
+                        continue
+
+                    img_base = os.path.splitext(os.path.basename(src_img))[0]
+                    wp = getattr(S, 'word_image_paths', []) or []
+                    wbb = getattr(S, 'word_bboxes', []) or []
+                    img_words = gan_texts_per_image.get(idx, [])
+                    local_crop_i = 0
+
+                    for i, crop_path in enumerate(wp):
+                        if not os.path.exists(crop_path):
+                            continue
+                        crop_name = f"{img_base}_{i}.png"
+                        crop_dst = os.path.join(images_dir, crop_name)
+                        try:
+                            shutil.move(crop_path, crop_dst)
+                        except Exception:
+                            try:
+                                shutil.copyfile(crop_path, crop_dst)
+                            except Exception:
+                                continue
+                        if i < len(wbb):
+                            bb = wbb[i]
+                            try:
+                                bx, by, bw, bh = (int(bb[0]), int(bb[1]),
+                                                   int(bb[2]), int(bb[3]))
+                            except Exception:
+                                bx, by, bw, bh = 0, 0, 0, 0
+                        else:
+                            bx, by, bw, bh = 0, 0, 0, 0
+                        gt = user_annotations.get(global_crop_idx, '')
+                        if not gt and local_crop_i < len(img_words):
+                            gt = img_words[local_crop_i]
+                        local_crop_i += 1
+                        global_crop_idx += 1
+                        crop_entries.append((crop_name,
+                                             os.path.basename(src_img),
+                                             bx, by, bw, bh, gt))
+
+                if old_path_dir is not None:
+                    S.pathDirectory = old_path_dir
+                if old_input_mode is not None and hasattr(S, 'input_mode_var'):
+                    S.input_mode_var.set(old_input_mode)
+                try:
+                    shutil.rmtree(tmp_root)
+                except Exception:
+                    pass
+
+            else:
+                # Detector unavailable – copy main images as crops
+                for c_idx, (c_name, c_texts) in enumerate(copied):
+                    src_p = os.path.join(session_dir, c_name)
+                    if not os.path.isfile(src_p):
+                        continue
+                    try:
+                        shutil.copy2(src_p, os.path.join(images_dir, c_name))
+                    except Exception:
+                        continue
+                    gt = user_annotations.get(global_crop_idx, '')
+                    if not gt:
+                        gt = ' '.join(
+                            [t.strip() for t in (c_texts or []) if t]) or ''
+                    global_crop_idx += 1
+                    try:
+                        im = Image.open(src_p)
+                        iw, ih = im.size
+                    except Exception:
+                        iw, ih = 0, 0
+                    crop_entries.append(
+                        (c_name, c_name, 0, 0, iw, ih, gt))
+
+            self._set_progress(75, "Writing annotation file…")
+
+            # Write IAM-format annotations.txt
+            ann_path = os.path.join(images_dir, 'annotations.txt')
+            with open(ann_path, 'w', encoding='utf-8') as af:
+                af.write(f'# {label}-level annotations (IAM format)\n')
+                af.write('# crop_name ok writer_id x y w h transcription\n')
+                for crop_name, src_img, bx, by, bw, bh, gt in crop_entries:
+                    af.write(f"{crop_name} ok 0 {bx} {by} {bw} {bh} {gt}\n")
+
+            try:
+                import json as _json
+                meta_path = os.path.join(images_dir, 'annotation_meta.json')
+                with open(meta_path, 'w', encoding='utf-8') as mf:
+                    _json.dump({"annotation_type": label,
+                                "total_crops": len(crop_entries),
+                                "created": stamp}, mf)
+            except Exception:
+                pass
+
+            folder = images_dir
+            ann_file = ann_path
+            self.ctx['image_dir'] = images_dir
+            self.ctx['annotation_file'] = ann_path
+            self.ctx['images'] = [os.path.join(images_dir, e[0])
+                                  for e in crop_entries]
+
+            self._set_progress(80, "Running corpus analysis…")
+            stats = self.analyzer.analyze_folder(images_dir)
+            stats["has_annotations"] = True
+
+        except Exception as _synth_err:
+            import traceback
+            traceback.print_exc()
+            print(f"[step_analysis] Synthetic export error: {_synth_err}")
+            stats = {"error": str(_synth_err)}
+            folder = self.ctx.get("image_dir", "")
+            ann_file = self.ctx.get("annotation_file")
+
+        stats["_folder"] = folder
+        stats["_ann_file"] = ann_file
+        return stats
 
     def _export_crops_from_annotation(self, folder: str, ann_file: str, ann_type: str):
         """Read an IAM-style annotation file and save crops per image.
@@ -521,8 +649,10 @@ class AnalysisPanel(tk.Frame):
     def _populate_tabs(self, stats):
         if "error" in stats:
             self.status_var.set(f"❌ Error: {stats['error']}")
+            self._set_progress(0, "")
             return
         self.status_var.set("✅ Analysis complete")
+        self._set_progress(100, "Done")
 
         self._populate_overview(stats)
         self._populate_labels(stats)
