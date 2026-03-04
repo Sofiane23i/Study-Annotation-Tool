@@ -122,14 +122,37 @@ class AnalysisPanel(tk.Frame):
             self.update_idletasks()
         self.after(0, _update)
 
+    def _collect_panel_annotations_on_main_thread(self):
+        """Read annotation panel data on the main thread (safe for tkinter).
+
+        Returns a dict with keys 'data', 'total', 'mode' if panel data
+        is available, or None otherwise.
+        """
+        panel = self._get_annotation_panel()
+        if panel is None:
+            return None
+        if not hasattr(panel, '_collect_annotations_data'):
+            return None
+        try:
+            data, total, mode = panel._collect_annotations_data()
+            if total > 0 and mode in ('word', 'line'):
+                return {'data': data, 'total': total, 'mode': mode}
+        except Exception:
+            import traceback; traceback.print_exc()
+        return None
+
     def _run_analysis(self):
         self.status_var.set("⏳ Analyzing dataset…")
         self.btn_reanalyze.config(state="disabled")
         self._set_progress(0, "Starting…")
 
+        # ── Collect annotation panel data ON THE MAIN THREAD ──
+        # (tkinter widgets can only be read from the main thread)
+        panel_annotations = self._collect_panel_annotations_on_main_thread()
+
         def worker():
             try:
-                self._run_analysis_worker()
+                self._run_analysis_worker(panel_annotations)
             except Exception as exc:
                 import traceback
                 traceback.print_exc()
@@ -203,10 +226,74 @@ class AnalysisPanel(tk.Frame):
         return stats
 
     # ------------------------------------------------------------------
+    # Annotation panel analysis (uses live data from Step 3)
+    # ------------------------------------------------------------------
+
+    def _get_annotation_panel(self):
+        """Return the AnnotationPanel instance if available."""
+        import state as S
+        try:
+            wm = getattr(S, 'workflow_manager', None)
+            if wm and hasattr(wm, 'step_panels'):
+                return wm.step_panels.get('annotation')
+        except Exception:
+            pass
+        return None
+
+    def _try_analyze_from_annotation_panel(self, panel_annotations=None) -> bool:
+        """Check whether the Annotation panel has user-entered word/line
+        annotations that should take priority over GAN input text.
+        Uses pre-collected data (thread-safe)."""
+        if panel_annotations is None:
+            return False
+        return (panel_annotations.get('total', 0) > 0
+                and panel_annotations.get('mode') in ('word', 'line'))
+
+    def _analyze_annotation_panel_data(self, panel_annotations=None):
+        """Compute stats from pre-collected annotation panel data
+        using the same pipeline as _analyze_from_context.
+        Uses pre-collected data (thread-safe)."""
+        if panel_annotations is None:
+            return {"error": "No annotation panel data available."}
+
+        data = panel_annotations['data']
+
+        # Convert annotation panel dict → list-of-dicts for _analyze_from_context
+        flat_annotations = []
+
+        if data.get('mode') == 'word':
+            for w_entry in data.get('words', []):
+                text = (w_entry.get('text') or '').strip()
+                if text:
+                    flat_annotations.append({
+                        "image_id": w_entry.get('file', ''),
+                        "label": text,
+                    })
+
+        elif data.get('mode') == 'line':
+            for l_entry in data.get('lines', []):
+                text = (l_entry.get('text') or '').strip()
+                if text:
+                    flat_annotations.append({
+                        "image_id": (l_entry.get('file', '')
+                                     or data.get('image', '')),
+                        "label": text,
+                    })
+
+        if not flat_annotations:
+            return {"error": "No annotation texts found in Annotation stage."}
+
+        self._set_progress(40, f"Analyzing {len(flat_annotations)} annotations…")
+        stats = self._analyze_from_context(
+            flat_annotations, self.ctx.get("images", []))
+        stats["annotation_source"] = "annotation_stage"
+        return stats
+
+    # ------------------------------------------------------------------
     # Main analysis worker (runs in background thread)
     # ------------------------------------------------------------------
 
-    def _run_analysis_worker(self):
+    def _run_analysis_worker(self, panel_annotations=None):
         stats = {}
         folder = self.ctx.get("image_dir", "")
         ann_file = self.ctx.get("annotation_file")
@@ -225,10 +312,17 @@ class AnalysisPanel(tk.Frame):
                 ctx_annotations, self.ctx.get("images", []))
             has_ann = True
 
+        # ── Annotation panel path: use live annotations from the ──
+        # ── Annotation stage (word/line) instead of GAN input text ──
+        elif self._try_analyze_from_annotation_panel(panel_annotations):
+            self._set_progress(20, "Analyzing annotation stage data…")
+            stats = self._analyze_annotation_panel_data(panel_annotations)
+            has_ann = True
+
         # ── Synthetic / GAN generation path ──
         elif self.ctx.get("type") == "synthetic":
             self._set_progress(5, "Preparing GAN output…")
-            stats = self._run_synthetic_analysis()
+            stats = self._run_synthetic_analysis(panel_annotations)
             has_ann = stats.get("has_annotations", False)
             folder = stats.pop("_folder", folder)
             ann_file = stats.pop("_ann_file", ann_file)
@@ -290,7 +384,7 @@ class AnalysisPanel(tk.Frame):
     # Synthetic / GAN analysis (heavy path, kept separate)
     # ------------------------------------------------------------------
 
-    def _run_synthetic_analysis(self):
+    def _run_synthetic_analysis(self, panel_annotations=None):
         """Handle GAN-generated synthetic data: export crops + annotations."""
         stats = {}
         folder = self.ctx.get("image_dir", "")
@@ -363,20 +457,38 @@ class AnalysisPanel(tk.Frame):
             crop_entries = []
 
             # Build user-annotation lookup
+            # Priority: 1) Pre-collected annotation panel data  2) ctx['annotations']  3) GAN input text
             user_annotations = {}
-            ann_data = self.ctx.get('annotations') or {}
-            ann_mode = ann_data.get('mode', 'word') if isinstance(ann_data, dict) else 'word'
-            if isinstance(ann_data, dict):
-                if ann_mode == 'word':
-                    for wi, w_entry in enumerate(ann_data.get('words', [])):
+
+            # (1) Use pre-collected annotation panel data (already read on main thread)
+            if panel_annotations and isinstance(panel_annotations.get('data'), dict):
+                panel_data = panel_annotations['data']
+                if panel_data.get('mode') == 'word':
+                    for wi, w_entry in enumerate(panel_data.get('words', [])):
                         txt = (w_entry.get('text') or '').strip()
                         if txt:
                             user_annotations[wi] = txt
-                elif ann_mode == 'line':
-                    for li, l_entry in enumerate(ann_data.get('lines', [])):
+                elif panel_data.get('mode') == 'line':
+                    for li, l_entry in enumerate(panel_data.get('lines', [])):
                         txt = (l_entry.get('text') or '').strip()
                         if txt:
                             user_annotations[li] = txt
+
+            # (2) Fallback: ctx['annotations'] (saved annotation data)
+            if not user_annotations:
+                ann_data = self.ctx.get('annotations') or {}
+                ann_mode = ann_data.get('mode', 'word') if isinstance(ann_data, dict) else 'word'
+                if isinstance(ann_data, dict):
+                    if ann_mode == 'word':
+                        for wi, w_entry in enumerate(ann_data.get('words', [])):
+                            txt = (w_entry.get('text') or '').strip()
+                            if txt:
+                                user_annotations[wi] = txt
+                    elif ann_mode == 'line':
+                        for li, l_entry in enumerate(ann_data.get('lines', [])):
+                            txt = (l_entry.get('text') or '').strip()
+                            if txt:
+                                user_annotations[li] = txt
 
             # Build GAN text lists per source image
             gan_texts_per_image = {}

@@ -1,0 +1,4 @@
+# line-level annotations (IAM format)
+# crop_name ok writer_id x y w h transcription
+batch_1_b2b284_line0.png ok 0 505 136 225 34 sofiane medjram
+batch_1_b2b284_line1.png ok 0 536 205 172 41 qassim joujou

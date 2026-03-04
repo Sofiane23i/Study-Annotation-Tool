@@ -469,7 +469,7 @@ class PreprocessingPanel(tk.Frame):
                  wraplength=700, justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
 
         self._annotation_type_var = tk.StringVar(
-            value=getattr(S, "annotation_type", "word"))
+            value=getattr(S, "annotation_type", ""))
 
         btn_row = tk.Frame(inner, bg=self.colors["bg_section"])
         btn_row.pack(fill=tk.X)
@@ -1041,6 +1041,31 @@ class PreprocessingPanel(tk.Frame):
             return False
         return True
 
+    def _update_annotation_settings(self, detected_type: str, has_detections: bool):
+        """Auto-update annotation_type and annotation_source based on detection results.
+
+        If *has_detections* is True, annotation_type is set to *detected_type*
+        (word/line/character) and annotation_source to 'preprocessing'.
+        Otherwise annotation_type is cleared (user must choose manually)
+        and annotation_source defaults to 'original'.
+        """
+        if has_detections:
+            ann_type = detected_type
+            ann_src = "preprocessing"
+        else:
+            ann_type = ""
+            ann_src = "original"
+
+        S.annotation_type = ann_type
+        self.ctx["annotation_type"] = ann_type
+        if hasattr(self, "_annotation_type_var"):
+            self._annotation_type_var.set(ann_type)
+
+        S.annotation_source = ann_src
+        self.ctx["annotation_source"] = ann_src
+        if hasattr(self, "_annotation_source_var"):
+            self._annotation_source_var.set(ann_src)
+
     def _clear_previous_detections(self, clear_word_crops=False):
         """Remove all previous detection results so modes don't overlap.
         If clear_word_crops is True, also remove crops in out_dir."""
@@ -1074,6 +1099,9 @@ class PreprocessingPanel(tk.Frame):
             import traceback; traceback.print_exc()
         finally:
             self.btn_word.config(state=tk.NORMAL, text="Detect Words")
+        # Auto-set annotation type & source based on detection results
+        word_bboxes = getattr(S, 'word_bboxes', []) or []
+        self._update_annotation_settings("word", len(word_bboxes) > 0)
         # Ensure we stay in the preprocessing panel (undo any container
         # switching that save_file / display_word_bboxes_func may trigger)
         self._restore_workflow_view()
@@ -1107,6 +1135,9 @@ class PreprocessingPanel(tk.Frame):
             import traceback; traceback.print_exc()
         finally:
             self.btn_line.config(state=tk.NORMAL, text="Detect Lines")
+        # Auto-set annotation type & source based on detection results
+        detected_lines = getattr(S, 'detected_lines', []) or []
+        self._update_annotation_settings("line", len(detected_lines) > 0)
         self._restore_workflow_view()
         self._switch_bbox_tab("lines")
         self._load_current_image()
@@ -1133,6 +1164,9 @@ class PreprocessingPanel(tk.Frame):
             import traceback; traceback.print_exc()
         finally:
             self.btn_char.config(state=tk.NORMAL, text="Detect Characters")
+        # Auto-set annotation type & source based on detection results
+        char_boxes = getattr(S, 'char_detected_boxes', []) or []
+        self._update_annotation_settings("character", len(char_boxes) > 0)
         self._restore_workflow_view()
         self._switch_bbox_tab("chars")
         self._load_current_image()
@@ -1219,16 +1253,31 @@ class PreprocessingPanel(tk.Frame):
     def refresh(self, ctx):
         """Called when returning to this step."""
         self.ctx = ctx
-        # Sync annotation type from context or state
-        ann_type = ctx.get("annotation_type",
-                           getattr(S, "annotation_type", "word"))
+
+        # Determine whether detections already exist
+        has_words = bool(getattr(S, 'word_bboxes', None))
+        has_lines = bool(getattr(S, 'detected_lines', None))
+        has_chars = bool(getattr(S, 'char_detected_boxes', None))
+
+        if has_words or has_lines or has_chars:
+            # Detections exist — keep the annotation type & source that
+            # were set automatically by detection.
+            ann_type = ctx.get("annotation_type",
+                               getattr(S, "annotation_type", ""))
+            ann_src = ctx.get("annotation_source",
+                              getattr(S, "annotation_source", "preprocessing"))
+        else:
+            # No detections yet — default to empty type / original source
+            ann_type = ctx.get("annotation_type",
+                               getattr(S, "annotation_type", ""))
+            ann_src = ctx.get("annotation_source",
+                              getattr(S, "annotation_source", "original"))
+
         if hasattr(self, "_annotation_type_var"):
             self._annotation_type_var.set(ann_type)
         S.annotation_type = ann_type
         ctx["annotation_type"] = ann_type
-        # Sync annotation source
-        ann_src = ctx.get("annotation_source",
-                          getattr(S, "annotation_source", "original"))
+
         if hasattr(self, "_annotation_source_var"):
             self._annotation_source_var.set(ann_src)
         S.annotation_source = ann_src

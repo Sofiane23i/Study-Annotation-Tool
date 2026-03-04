@@ -1414,6 +1414,10 @@ class AnnotationPanel(tk.Frame):
         if mode is None:
             mode = getattr(self, '_page_mode', 'word') or 'word'
 
+        # Normalise line sub-modes to canonical 'line'
+        if mode in ('line_detected', 'line_cropped'):
+            mode = 'line'
+
         data = {}
         total = 0
         if mode == 'word':

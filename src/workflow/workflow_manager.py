@@ -143,8 +143,21 @@ class WorkflowManager:
             self._show_step(self.current_step - 1)
 
     def _go_next(self):
-        # Mark current as completed
         key = STEP_DEFINITIONS[self.current_step]["key"]
+
+        # ── Validation: preprocessing → annotation requires annotation type
+        if key == "preprocessing":
+            ann_type = (self.dataset_ctx.get("annotation_type") or "").strip()
+            if not ann_type:
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    "Annotation Type Required",
+                    "Please select an Annotation Type (Line, Word, or Character) "
+                    "before continuing to the Annotation stage.\n\n"
+                    "If no detection was run, choose the type that matches your data.")
+                return
+
+        # Mark current as completed
         self.step_states[key] = "completed"
         if self.current_step < len(STEP_DEFINITIONS) - 1:
             self._show_step(self.current_step + 1)
